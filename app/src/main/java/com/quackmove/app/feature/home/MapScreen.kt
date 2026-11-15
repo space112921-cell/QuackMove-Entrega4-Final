@@ -2,41 +2,114 @@
 package com.quackmove.app.feature.home
 
 import android.view.ViewGroup
+
+import androidx.activity.compose.BackHandler
+
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+
 import androidx.compose.material3.*
+
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
+
+import com.quackmove.app.data.repository.PlaceSearchResult
+import com.quackmove.app.data.repository.RoutePoint
+
 import kotlinx.coroutines.launch
+
 import org.maplibre.android.maps.MapView
 
-// Colores originales de QuackMove
-private val ButtonBackground = Color(0xFF111827)
-private val ButtonBorder = Color(0xFF405174)
-private val MintGreen = Color(0xFF43E6B3)
-private val Purple = Color(0xFFB6A0FF)
-private val PrimaryText = Color(0xFFF5F6FF)
-private val SecondaryText = Color(0xFFB6C2DF)
-private val PanelBackground = Color(0xFF142039)
+import java.util.Locale
+import kotlin.math.roundToInt
+
 
 // =====================================
-// PANTALLA PRINCIPAL
+// COLORES QUACKMOVE
+// =====================================
+
+private val QMDark = Color(0xFF101928)
+private val QMPanel = Color(0xFF142039)
+private val QMCard = Color(0xFF1D2C46)
+private val QMLine = Color(0xFF405174)
+
+private val QMAccent = Color(0xFF8066F5)
+private val QMAccentSoft = Color(0xFFAAA0FF)
+
+private val QMWhite = Color(0xFFF5F6FF)
+private val QMGray = Color(0xFFB6C2DF)
+
+private val QMWarning = Color(0xFFFFB86B)
+private val QMRed = Color(0xFFFF355D)
+
+// =====================================
+// MODOS DE PANTALLA
+// =====================================
+
+private enum class HomePanelMode {
+    HOME,
+    SEARCH,
+    PLANNING,
+    PREVIEW,
+    NAVIGATING
+}
+
+private enum class SearchTarget {
+    ORIGIN,
+    DESTINATION,
+    STOP
+}
+
+// =====================================
+// FORMATO DE NUMEROS
+// =====================================
+
+private fun qmNumber(
+    value: Double
+): String {
+
+    return String.format(
+        Locale.US,
+        "%.1f",
+        value
+    )
+}
+
+private fun qmTime(
+    minutesTotal: Int
+): String {
+
+    val hours = minutesTotal / 60
+    val minutes = minutesTotal % 60
+
+    return if (hours > 0) {
+        "${hours} h ${minutes} min"
+    } else {
+        "${minutes} min"
+    }
+}
+
+// =====================================
+// MAP SCREEN
 // =====================================
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -47,508 +120,2519 @@ fun MapScreen(
     onReturnToCenter: () -> Unit,
     onOpenRegistration: () -> Unit,
     onOpenChargers: () -> Unit,
-    onOpenRoute: (String) -> Unit
+    onShowChargersOnMap: () -> Unit,
+    onOpenRoute: (String) -> Unit,
+
+    recentDestinations: List<RoutePoint> = emptyList(),
+
+    onCalculateRoute: (
+        RoutePoint?,
+        RoutePoint,
+        Float,
+        (Result<RoutePlanResult>) -> Unit
+    ) -> Unit,
+
+    onContinueTrip: () -> Unit,
+
+    onFinishTrip: (
+        RoutePlanResult,
+        RoutePoint,
+        Float,
+        String
+    ) -> Unit
 ) {
 
     val scope = rememberCoroutineScope()
 
     val drawerState = rememberDrawerState(
-        initialValue = DrawerValue.Closed
+        DrawerValue.Closed
     )
 
-    val scaffoldState = rememberBottomSheetScaffoldState()
+    val sheetState =
+        rememberBottomSheetScaffoldState()
 
-    val snackbarHostState = remember {
-        SnackbarHostState()
+    // =====================================
+    // MODO ACTUAL
+    // =====================================
+
+    var mode by rememberSaveable {
+        mutableStateOf(HomePanelMode.HOME)
     }
 
-    // ViewModel con StateFlow
-    val model: HomeViewModel = viewModel()
+    // =====================================
+    // CORRECCION DEL SCROLL
+    // =====================================
+    //
+    // Cada modo tiene su desplazamiento
+    // reiniciado.
+    //
+    // Al entrar a NAVIGATING, comenzamos
+    // desde arriba para mostrar inmediatamente
+    // tiempo, bateria y botones.
+    //
+    // No conservamos la posicion de scroll
+    // de PREVIEW o PLANNING.
 
-    // Observar el estado de la pantalla principal
-    val state by model.uiState.collectAsStateWithLifecycle()
+    val panelScrollState = remember(mode) {
+        ScrollState(0)
+    }
 
-    val searchText = state.searchText
+    LaunchedEffect(mode) {
 
-    val searchExpanded =
-        scaffoldState.bottomSheetState.currentValue ==
-                SheetValue.Expanded
+        panelScrollState.scrollTo(0)
+    }
 
     // =====================================
-    // MENÚ LATERAL
+    // BUSQUEDA
     // =====================================
 
-    ModalNavigationDrawer(
-        drawerState = drawerState,
-        gesturesEnabled = false,
+    var searchTarget by remember {
+        mutableStateOf(SearchTarget.DESTINATION)
+    }
 
-        drawerContent = {
+    var searchText by rememberSaveable {
+        mutableStateOf("")
+    }
 
-            ModalDrawerSheet(
-                modifier = Modifier.width(300.dp),
-                drawerContainerColor = PanelBackground,
-                drawerContentColor = PrimaryText
+    // =====================================
+    // ORIGEN Y DESTINO
+    // =====================================
+
+    var origin by rememberSaveable {
+        mutableStateOf("Tu ubicación")
+    }
+
+    var destination by rememberSaveable {
+        mutableStateOf("")
+    }
+
+    var stop by rememberSaveable {
+        mutableStateOf("")
+    }
+
+    var selectedOrigin by remember {
+        mutableStateOf<RoutePoint?>(null)
+    }
+
+    var selectedDestination by remember {
+        mutableStateOf<RoutePoint?>(null)
+    }
+
+    var selectedStop by remember {
+        mutableStateOf<RoutePoint?>(null)
+    }
+
+    var showStop by rememberSaveable {
+        mutableStateOf(false)
+    }
+
+    // =====================================
+    // VEHICULO
+    // =====================================
+
+    var vehicleName by rememberSaveable {
+        mutableStateOf("")
+    }
+
+    var batteryPercent by rememberSaveable {
+        mutableFloatStateOf(80f)
+    }
+
+    var showVehicleEditor by remember {
+        mutableStateOf(false)
+    }
+
+    // =====================================
+    // RESULTADO DEL VIAJE
+    // =====================================
+
+    var routePlan by remember {
+        mutableStateOf<RoutePlanResult?>(null)
+    }
+
+    var calculatingRoute by remember {
+        mutableStateOf(false)
+    }
+
+    var routeError by remember {
+        mutableStateOf<String?>(null)
+    }
+
+    var darkMap by rememberSaveable {
+        mutableStateOf(true)
+    }
+
+    // =====================================
+    // CONTROL DEL PANEL
+    // =====================================
+
+    fun expandPanel() {
+
+        scope.launch {
+
+            sheetState.bottomSheetState.expand()
+        }
+    }
+
+    fun collapsePanel() {
+
+        scope.launch {
+
+            sheetState.bottomSheetState.partialExpand()
+        }
+    }
+
+    fun resetCalculation() {
+
+        routePlan = null
+        routeError = null
+    }
+
+    // =====================================
+    // ABRIR BUSQUEDA
+    // =====================================
+
+    fun openSearch(
+        target: SearchTarget
+    ) {
+
+        searchTarget = target
+
+        searchText = when (target) {
+
+            SearchTarget.ORIGIN -> {
+
+                if (origin == "Tu ubicación") {
+                    ""
+                } else {
+                    origin
+                }
+            }
+
+            SearchTarget.DESTINATION -> {
+                destination
+            }
+
+            SearchTarget.STOP -> {
+                stop
+            }
+        }
+
+        mode = HomePanelMode.SEARCH
+    }
+
+    // =====================================
+    // SELECCIONAR LUGAR
+    // =====================================
+
+    fun selectPoint(
+        point: RoutePoint
+    ) {
+
+        when (searchTarget) {
+
+            SearchTarget.ORIGIN -> {
+
+                origin = point.name
+                selectedOrigin = point
+            }
+
+            SearchTarget.DESTINATION -> {
+
+                destination = point.name
+                selectedDestination = point
+            }
+
+            SearchTarget.STOP -> {
+
+                stop = point.name
+                selectedStop = point
+                showStop = true
+            }
+        }
+
+        resetCalculation()
+
+        mode = HomePanelMode.PLANNING
+
+        expandPanel()
+    }
+
+    // =====================================
+    // CERRAR BUSQUEDA
+    // =====================================
+
+    fun closeSearch() {
+
+        mode = if (
+            destination.isNotBlank() ||
+            origin != "Tu ubicación" ||
+            showStop
+        ) {
+
+            HomePanelMode.PLANNING
+
+        } else {
+
+            HomePanelMode.HOME
+        }
+    }
+
+    // =====================================
+    // CALCULAR RUTA
+    // =====================================
+
+    fun calculateTrip() {
+
+        val point = selectedDestination ?: return
+
+        if (calculatingRoute) {
+            return
+        }
+
+        if (showStop) {
+
+            routeError =
+                "Las paradas todavía no están " +
+                        "integradas en este cálculo."
+
+            return
+        }
+
+        resetCalculation()
+
+        calculatingRoute = true
+
+        mode = HomePanelMode.PREVIEW
+
+        expandPanel()
+
+        onCalculateRoute(
+            selectedOrigin,
+            point,
+            batteryPercent
+        ) { result ->
+
+            calculatingRoute = false
+
+            result.fold(
+                onSuccess = { plan ->
+
+                    routePlan = plan
+                    routeError = null
+                },
+
+                onFailure = { error ->
+
+                    routePlan = null
+
+                    routeError =
+                        error.message
+                            ?: "No se pudo calcular la ruta."
+                }
+            )
+        }
+    }
+
+    // =====================================
+    // CONTINUAR
+    // =====================================
+
+    fun continueTrip() {
+
+        if (routePlan == null) {
+            return
+        }
+
+        // Acercar el mapa a la posicion inicial.
+        onContinueTrip()
+
+        // Cambiar el contenido del panel.
+        // El scroll se reinicia automaticamente
+        // al cambiar el modo.
+        mode = HomePanelMode.NAVIGATING
+
+        scope.launch {
+
+            panelScrollState.scrollTo(0)
+
+            sheetState.bottomSheetState
+                .partialExpand()
+        }
+    }
+
+    // =====================================
+    // FINALIZAR Y GUARDAR
+    // =====================================
+
+    fun finishTrip() {
+
+        val completedPlan = routePlan
+
+        val completedDestination =
+            selectedDestination
+
+        if (
+            completedPlan != null &&
+            completedDestination != null
+        ) {
+
+            onFinishTrip(
+                completedPlan,
+                completedDestination,
+                batteryPercent,
+                origin
+            )
+
+        } else {
+
+            routeError =
+                "No hay un viaje válido para finalizar."
+
+            return
+        }
+
+        // Limpiar viaje actual.
+        origin = "Tu ubicación"
+        destination = ""
+        stop = ""
+
+        selectedOrigin = null
+        selectedDestination = null
+        selectedStop = null
+
+        showStop = false
+        searchText = ""
+
+        routePlan = null
+        routeError = null
+        calculatingRoute = false
+
+        // Conservar Mi carro y bateria.
+        mode = HomePanelMode.HOME
+
+        collapsePanel()
+    }
+
+    // =====================================
+    // BOTON ATRAS
+    // =====================================
+
+    BackHandler(
+        enabled =
+            mode == HomePanelMode.SEARCH ||
+                    mode == HomePanelMode.NAVIGATING
+    ) {
+
+        when (mode) {
+
+            HomePanelMode.SEARCH -> {
+
+                closeSearch()
+            }
+
+            HomePanelMode.NAVIGATING -> {
+
+                collapsePanel()
+            }
+
+            else -> Unit
+        }
+    }
+
+    // =====================================
+    // EDITAR MI CARRO
+    // =====================================
+
+    if (showVehicleEditor) {
+
+        QMVehicleEditorSheet(
+            initialName = vehicleName,
+            initialBattery = batteryPercent,
+
+            onDismiss = {
+
+                showVehicleEditor = false
+            },
+
+            onSave = { newName, newBattery ->
+
+                vehicleName = newName
+                batteryPercent = newBattery
+
+                resetCalculation()
+
+                showVehicleEditor = false
+            }
+        )
+    }
+
+    // =====================================
+    // CONTENEDOR GENERAL
+    // =====================================
+
+    Box(
+        modifier = Modifier.fillMaxSize()
+    ) {
+
+        ModalNavigationDrawer(
+            drawerState = drawerState,
+            gesturesEnabled = false,
+
+            drawerContent = {
+
+                ModalDrawerSheet(
+                    drawerContainerColor = QMPanel,
+                    modifier = Modifier.width(290.dp)
+                ) {
+
+                    Text(
+                        text = "QuackMove",
+                        color = QMWhite,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(24.dp)
+                    )
+
+                    HorizontalDivider(
+                        color = QMLine
+                    )
+
+                    NavigationDrawerItem(
+                        label = {
+                            Text("Inicio")
+                        },
+
+                        selected =
+                            mode == HomePanelMode.HOME,
+
+                        icon = {
+                            Icon(
+                                Icons.Default.Home,
+                                contentDescription = null
+                            )
+                        },
+
+                        onClick = {
+
+                            mode = HomePanelMode.HOME
+
+                            scope.launch {
+                                drawerState.close()
+                            }
+                        }
+                    )
+
+                    NavigationDrawerItem(
+                        label = {
+                            Text("Mi carro")
+                        },
+
+                        selected = false,
+
+                        icon = {
+                            Icon(
+                                Icons.Default.DirectionsCar,
+                                contentDescription = null
+                            )
+                        },
+
+                        onClick = {
+
+                            showVehicleEditor = true
+
+                            scope.launch {
+                                drawerState.close()
+                            }
+                        }
+                    )
+
+                    NavigationDrawerItem(
+                        label = {
+                            Text("Buscar destino")
+                        },
+
+                        selected = false,
+
+                        icon = {
+                            Icon(
+                                Icons.Default.Search,
+                                contentDescription = null
+                            )
+                        },
+
+                        onClick = {
+
+                            scope.launch {
+                                drawerState.close()
+                            }
+
+                            openSearch(
+                                SearchTarget.DESTINATION
+                            )
+                        }
+                    )
+
+                    NavigationDrawerItem(
+                        label = {
+                            Text("Cargadores")
+                        },
+
+                        selected = false,
+
+                        icon = {
+                            Icon(
+                                Icons.Default.EvStation,
+                                contentDescription = null
+                            )
+                        },
+
+                        onClick = {
+
+                            scope.launch {
+                                drawerState.close()
+                            }
+
+                            onOpenChargers()
+                        }
+                    )
+
+                    NavigationDrawerItem(
+                        label = {
+                            Text("Crear cuenta")
+                        },
+
+                        selected = false,
+
+                        icon = {
+                            Icon(
+                                Icons.Default.PersonAdd,
+                                contentDescription = null
+                            )
+                        },
+
+                        onClick = {
+
+                            scope.launch {
+                                drawerState.close()
+                            }
+
+                            onOpenRegistration()
+                        }
+                    )
+                }
+            }
+        ) {
+
+            // =====================================
+            // PANEL INFERIOR
+            // =====================================
+
+            BottomSheetScaffold(
+                scaffoldState = sheetState,
+
+                sheetPeekHeight =
+                    if (mode == HomePanelMode.NAVIGATING) {
+                        200.dp
+                    } else {
+                        100.dp
+                    },
+
+                sheetContainerColor = QMPanel,
+
+                sheetContentColor = QMWhite,
+
+                sheetShape = RoundedCornerShape(
+                    topStart = 28.dp,
+                    topEnd = 28.dp
+                ),
+
+                sheetDragHandle = {
+
+                    BottomSheetDefaults.DragHandle(
+                        color = QMLine
+                    )
+                },
+
+                sheetContent = {
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(
+                                max = if (
+                                    mode == HomePanelMode.NAVIGATING
+                                ) {
+                                    640.dp
+                                } else {
+                                    580.dp
+                                }
+                            )
+                            .navigationBarsPadding()
+
+                            // CORREGIDO:
+                            // No reutilizamos el scroll
+                            // del panel anterior.
+                            .verticalScroll(panelScrollState)
+
+                            .padding(
+                                start = 16.dp,
+                                end = 16.dp,
+                                bottom = 20.dp
+                            ),
+
+                        verticalArrangement =
+                            Arrangement.spacedBy(14.dp)
+                    ) {
+
+                        when (mode) {
+
+                            // =========================
+                            // HOME
+                            // =========================
+
+                            HomePanelMode.HOME,
+                            HomePanelMode.SEARCH -> {
+
+                                Surface(
+                                    color = QMCard,
+
+                                    shape =
+                                        RoundedCornerShape(26.dp),
+
+                                    onClick = {
+
+                                        openSearch(
+                                            SearchTarget.DESTINATION
+                                        )
+                                    }
+                                ) {
+
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(58.dp)
+                                            .padding(
+                                                horizontal = 16.dp
+                                            ),
+
+                                        verticalAlignment =
+                                            Alignment.CenterVertically,
+
+                                        horizontalArrangement =
+                                            Arrangement.spacedBy(12.dp)
+                                    ) {
+
+                                        Icon(
+                                            Icons.Default.Search,
+                                            contentDescription = null,
+                                            tint = QMAccentSoft
+                                        )
+
+                                        Text(
+                                            "¿A dónde vas?",
+                                            color = QMWhite,
+                                            fontSize = 17.sp,
+                                            modifier = Modifier.weight(1f)
+                                        )
+
+                                        Icon(
+                                            Icons.Default.ArrowForward,
+                                            contentDescription = null,
+                                            tint = QMGray
+                                        )
+                                    }
+                                }
+
+                                QMMyCarSection(
+                                    vehicleName = vehicleName,
+                                    batteryPercent = batteryPercent,
+
+                                    onBatteryChange = { value ->
+
+                                        batteryPercent =
+                                            value.roundToInt()
+                                                .toFloat()
+
+                                        resetCalculation()
+                                    },
+
+                                    onOpenEditor = {
+
+                                        showVehicleEditor = true
+                                    }
+                                )
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+
+                                    verticalAlignment =
+                                        Alignment.CenterVertically,
+
+                                    horizontalArrangement =
+                                        Arrangement.SpaceBetween
+                                ) {
+
+                                    Text(
+                                        "Recientes",
+                                        color = QMWhite,
+                                        fontSize = 19.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+
+                                    Text(
+                                        "${recentDestinations.size} destinos",
+                                        color = QMGray,
+                                        fontSize = 12.sp
+                                    )
+                                }
+
+                                if (recentDestinations.isEmpty()) {
+
+                                    Text(
+                                        "Todavía no hay destinos recientes.",
+
+                                        color = QMGray,
+                                        fontSize = 13.sp,
+
+                                        modifier =
+                                            Modifier.padding(12.dp)
+                                    )
+
+                                } else {
+
+                                    recentDestinations
+                                        .take(8)
+                                        .forEach { point ->
+
+                                            QMRecentRow(
+                                                point = point,
+
+                                                onClick = {
+
+                                                    searchTarget =
+                                                        SearchTarget.DESTINATION
+
+                                                    selectPoint(point)
+                                                }
+                                            )
+
+                                            HorizontalDivider(
+                                                color = QMLine
+                                            )
+                                        }
+                                }
+                            }
+
+                            // =========================
+                            // PLANIFICAR VIAJE
+                            // =========================
+
+                            HomePanelMode.PLANNING -> {
+
+                                QMHeader(
+                                    title = "Planificar viaje",
+
+                                    onBack = {
+
+                                        mode = HomePanelMode.HOME
+                                    }
+                                )
+
+                                QMLocationRow(
+                                    title = "Origen",
+                                    value = origin,
+                                    icon = Icons.Default.MyLocation,
+
+                                    onClick = {
+
+                                        openSearch(
+                                            SearchTarget.ORIGIN
+                                        )
+                                    }
+                                )
+
+                                if (origin != "Tu ubicación") {
+
+                                    TextButton(
+                                        onClick = {
+
+                                            origin = "Tu ubicación"
+
+                                            selectedOrigin = null
+
+                                            resetCalculation()
+                                        }
+                                    ) {
+
+                                        Text(
+                                            "Usar mi ubicación",
+                                            color = QMAccentSoft
+                                        )
+                                    }
+                                }
+
+                                QMLocationRow(
+                                    title = "Destino",
+
+                                    value = destination.ifBlank {
+                                        "Seleccionar destino"
+                                    },
+
+                                    icon = Icons.Default.Place,
+
+                                    onClick = {
+
+                                        openSearch(
+                                            SearchTarget.DESTINATION
+                                        )
+                                    }
+                                )
+
+                                if (showStop) {
+
+                                    QMLocationRow(
+                                        title = "Parada",
+
+                                        value = stop.ifBlank {
+                                            "Seleccionar parada"
+                                        },
+
+                                        icon =
+                                            Icons.Default.AddLocation,
+
+                                        onClick = {
+
+                                            openSearch(
+                                                SearchTarget.STOP
+                                            )
+                                        }
+                                    )
+                                }
+
+                                Row(
+                                    horizontalArrangement =
+                                        Arrangement.spacedBy(8.dp)
+                                ) {
+
+                                    OutlinedButton(
+                                        onClick = {
+
+                                            if (showStop) {
+
+                                                showStop = false
+                                                stop = ""
+                                                selectedStop = null
+
+                                            } else {
+
+                                                showStop = true
+
+                                                openSearch(
+                                                    SearchTarget.STOP
+                                                )
+                                            }
+
+                                            resetCalculation()
+                                        },
+
+                                        colors =
+                                            ButtonDefaults.outlinedButtonColors(
+                                                contentColor = QMAccentSoft
+                                            )
+                                    ) {
+
+                                        Icon(
+                                            if (showStop) {
+                                                Icons.Default.Close
+                                            } else {
+                                                Icons.Default.Add
+                                            },
+
+                                            contentDescription = null,
+
+                                            modifier =
+                                                Modifier.size(18.dp)
+                                        )
+
+                                        Spacer(Modifier.width(5.dp))
+
+                                        Text(
+                                            if (showStop) {
+                                                "Quitar"
+                                            } else {
+                                                "Parada"
+                                            }
+                                        )
+                                    }
+
+                                    OutlinedButton(
+                                        onClick = {
+
+                                            val previousOrigin = origin
+                                            val previousPoint =
+                                                selectedOrigin
+
+                                            if (
+                                                selectedOrigin != null &&
+                                                selectedDestination != null
+                                            ) {
+
+                                                origin = destination
+
+                                                selectedOrigin =
+                                                    selectedDestination
+
+                                                destination =
+                                                    previousOrigin
+
+                                                selectedDestination =
+                                                    previousPoint
+
+                                                resetCalculation()
+                                            }
+                                        },
+
+                                        enabled =
+                                            selectedOrigin != null &&
+                                                    selectedDestination != null,
+
+                                        colors =
+                                            ButtonDefaults.outlinedButtonColors(
+                                                contentColor = QMAccentSoft
+                                            )
+                                    ) {
+
+                                        Icon(
+                                            Icons.Default.SwapVert,
+
+                                            contentDescription = null,
+
+                                            modifier =
+                                                Modifier.size(18.dp)
+                                        )
+
+                                        Spacer(Modifier.width(5.dp))
+
+                                        Text("Invertir")
+                                    }
+                                }
+
+                                Surface(
+                                    color = QMCard,
+                                    shape = RoundedCornerShape(16.dp)
+                                ) {
+
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(14.dp),
+
+                                        horizontalArrangement =
+                                            Arrangement.SpaceBetween,
+
+                                        verticalAlignment =
+                                            Alignment.CenterVertically
+                                    ) {
+
+                                        Text(
+                                            "Batería inicial",
+                                            color = QMWhite
+                                        )
+
+                                        Text(
+                                            "${batteryPercent.roundToInt()}%",
+
+                                            color = QMAccentSoft,
+
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+
+                                Button(
+                                    onClick = {
+
+                                        calculateTrip()
+                                    },
+
+                                    enabled =
+                                        selectedDestination != null &&
+                                                !calculatingRoute &&
+                                                (
+                                                        origin == "Tu ubicación" ||
+                                                                selectedOrigin != null
+                                                        ) &&
+                                                !showStop,
+
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(52.dp),
+
+                                    shape = RoundedCornerShape(18.dp),
+
+                                    colors =
+                                        ButtonDefaults.buttonColors(
+                                            containerColor = QMAccent
+                                        )
+                                ) {
+
+                                    Text("Calcular ruta")
+                                }
+
+                                if (showStop) {
+
+                                    Text(
+                                        "Las paradas intermedias " +
+                                                "todavía no están habilitadas.",
+
+                                        color = QMWarning,
+                                        fontSize = 12.sp
+                                    )
+                                }
+                            }
+
+                            // =========================
+                            // RESULTADO DEL VIAJE
+                            // =========================
+
+                            HomePanelMode.PREVIEW -> {
+
+                                QMHeader(
+                                    title = "Tu viaje",
+
+                                    onBack = {
+
+                                        mode =
+                                            HomePanelMode.PLANNING
+                                    }
+                                )
+
+                                QMSummaryText(
+                                    title = "Origen",
+                                    value = origin
+                                )
+
+                                QMSummaryText(
+                                    title = "Destino",
+                                    value = destination
+                                )
+
+                                HorizontalDivider(
+                                    color = QMLine
+                                )
+
+                                when {
+
+                                    calculatingRoute -> {
+
+                                        Row(
+                                            verticalAlignment =
+                                                Alignment.CenterVertically,
+
+                                            horizontalArrangement =
+                                                Arrangement.spacedBy(12.dp)
+                                        ) {
+
+                                            CircularProgressIndicator(
+                                                modifier =
+                                                    Modifier.size(25.dp),
+
+                                                strokeWidth = 3.dp,
+
+                                                color = QMAccent
+                                            )
+
+                                            Text(
+                                                "Calculando recorrido...",
+                                                color = QMWhite
+                                            )
+                                        }
+                                    }
+
+                                    routeError != null -> {
+
+                                        Text(
+                                            routeError.orEmpty(),
+
+                                            color = QMWarning,
+                                            fontSize = 14.sp
+                                        )
+
+                                        OutlinedButton(
+                                            onClick = {
+
+                                                mode =
+                                                    HomePanelMode.PLANNING
+                                            },
+
+                                            modifier =
+                                                Modifier.fillMaxWidth()
+                                        ) {
+
+                                            Text("Intentar nuevamente")
+                                        }
+                                    }
+
+                                    routePlan != null -> {
+
+                                        val plan = routePlan!!
+
+                                        QMTripMetrics(plan)
+
+                                        QMTripConsumption(plan)
+
+                                        QMTripBatteryMessage(plan)
+
+                                        Text(
+                                            "Estimación provisional: " +
+                                                    "60 kWh de batería útil, " +
+                                                    "18 kWh/100 km y " +
+                                                    "10% de reserva mínima.",
+
+                                            color = QMGray,
+                                            fontSize = 11.sp
+                                        )
+
+                                        Button(
+                                            onClick = {
+
+                                                continueTrip()
+                                            },
+
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(52.dp),
+
+                                            shape =
+                                                RoundedCornerShape(16.dp),
+
+                                            colors =
+                                                ButtonDefaults.buttonColors(
+                                                    containerColor = QMAccent
+                                                )
+                                        ) {
+
+                                            Icon(
+                                                Icons.Default.Navigation,
+                                                contentDescription = null
+                                            )
+
+                                            Spacer(Modifier.width(8.dp))
+
+                                            Text(
+                                                "Continuar",
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+
+                                        OutlinedButton(
+                                            onClick = {
+
+                                                mode =
+                                                    HomePanelMode.PLANNING
+                                            },
+
+                                            modifier =
+                                                Modifier.fillMaxWidth()
+                                        ) {
+
+                                            Text("Modificar recorrido")
+                                        }
+                                    }
+
+                                    else -> {
+
+                                        Text(
+                                            "No hay una ruta calculada.",
+                                            color = QMGray
+                                        )
+                                    }
+                                }
+                            }
+
+                            // =========================
+                            // MODO CONDUCCION
+                            // =========================
+
+                            HomePanelMode.NAVIGATING -> {
+
+                                val plan = routePlan
+
+                                if (plan != null) {
+
+                                    // =====================
+                                    // PRIMERO:
+                                    // TIEMPO Y BATERIA
+                                    // =====================
+
+                                    Row(
+                                        modifier =
+                                            Modifier.fillMaxWidth(),
+
+                                        horizontalArrangement =
+                                            Arrangement.SpaceBetween,
+
+                                        verticalAlignment =
+                                            Alignment.CenterVertically
+                                    ) {
+
+                                        Column(
+                                            verticalArrangement =
+                                                Arrangement.spacedBy(4.dp)
+                                        ) {
+
+                                            Text(
+                                                "Tiempo estimado",
+                                                color = QMGray,
+                                                fontSize = 12.sp
+                                            )
+
+                                            Text(
+                                                qmTime(
+                                                    plan.route.drivingMinutes
+                                                ),
+
+                                                color = QMWhite,
+                                                fontSize = 24.sp,
+
+                                                fontWeight =
+                                                    FontWeight.Bold
+                                            )
+                                        }
+
+                                        Column(
+                                            horizontalAlignment =
+                                                Alignment.End,
+
+                                            verticalArrangement =
+                                                Arrangement.spacedBy(4.dp)
+                                        ) {
+
+                                            Text(
+                                                "Batería al llegar",
+                                                color = QMGray,
+                                                fontSize = 12.sp
+                                            )
+
+                                            Text(
+                                                plan.battery
+                                                    .estimatedArrivalPercent
+                                                    ?.let {
+                                                        "${qmNumber(it)}%"
+                                                    }
+                                                    ?: "No alcanza",
+
+                                                color = if (
+                                                    plan.battery
+                                                        .canCompleteTrip
+                                                ) {
+                                                    QMAccentSoft
+                                                } else {
+                                                    QMWarning
+                                                },
+
+                                                fontSize = 23.sp,
+
+                                                fontWeight =
+                                                    FontWeight.Bold
+                                            )
+                                        }
+                                    }
+
+                                    // =====================
+                                    // SEGUNDO:
+                                    // VIAJE Y FINALIZAR
+                                    // =====================
+
+                                    Row(
+                                        modifier =
+                                            Modifier.fillMaxWidth(),
+
+                                        horizontalArrangement =
+                                            Arrangement.spacedBy(10.dp)
+                                    ) {
+
+                                        OutlinedButton(
+                                            onClick = {
+
+                                                // Subir la hoja
+                                                // sin cambiar de modo.
+                                                expandPanel()
+                                            },
+
+                                            modifier =
+                                                Modifier.weight(1f),
+
+                                            border = BorderStroke(
+                                                1.dp,
+                                                QMLine
+                                            ),
+
+                                            shape =
+                                                RoundedCornerShape(15.dp),
+
+                                            colors =
+                                                ButtonDefaults
+                                                    .outlinedButtonColors(
+                                                        contentColor = QMWhite
+                                                    )
+                                        ) {
+
+                                            Icon(
+                                                Icons.Default.KeyboardArrowUp,
+                                                contentDescription = null,
+                                                modifier =
+                                                    Modifier.size(18.dp)
+                                            )
+
+                                            Spacer(Modifier.width(4.dp))
+
+                                            Text("Viaje")
+                                        }
+
+                                        Button(
+                                            onClick = {
+
+                                                finishTrip()
+                                            },
+
+                                            modifier =
+                                                Modifier.weight(1f),
+
+                                            shape =
+                                                RoundedCornerShape(15.dp),
+
+                                            colors =
+                                                ButtonDefaults.buttonColors(
+                                                    containerColor = QMRed,
+                                                    contentColor = QMWhite
+                                                )
+                                        ) {
+
+                                            Icon(
+                                                Icons.Default.Close,
+                                                contentDescription = null,
+                                                modifier =
+                                                    Modifier.size(17.dp)
+                                            )
+
+                                            Spacer(Modifier.width(4.dp))
+
+                                            Text("Finalizar")
+                                        }
+                                    }
+
+                                    // =====================
+                                    // DETALLES DEBAJO
+                                    // =====================
+
+                                    HorizontalDivider(
+                                        color = QMLine
+                                    )
+
+                                    Text(
+                                        "Tu viaje",
+                                        color = QMWhite,
+                                        fontSize = 20.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+
+                                    QMSummaryText(
+                                        title = "Origen",
+                                        value = origin
+                                    )
+
+                                    QMSummaryText(
+                                        title = "Destino",
+                                        value = destination
+                                    )
+
+                                    HorizontalDivider(
+                                        color = QMLine
+                                    )
+
+                                    QMTripMetrics(plan)
+
+                                    QMTripConsumption(plan)
+
+                                    QMTripBatteryMessage(plan)
+
+                                    Text(
+                                        "Estimación provisional: " +
+                                                "60 kWh de batería útil, " +
+                                                "18 kWh/100 km y " +
+                                                "10% de reserva mínima.",
+
+                                        color = QMGray,
+                                        fontSize = 11.sp
+                                    )
+
+                                    OutlinedButton(
+                                        onClick = {
+
+                                            // Volver a mostrar el
+                                            // panel pequeño.
+                                            collapsePanel()
+
+                                            // Preparar el scroll
+                                            // para la próxima vez.
+                                            scope.launch {
+                                                panelScrollState
+                                                    .animateScrollTo(0)
+                                            }
+                                        },
+
+                                        modifier =
+                                            Modifier.fillMaxWidth(),
+
+                                        colors =
+                                            ButtonDefaults
+                                                .outlinedButtonColors(
+                                                    contentColor =
+                                                        QMAccentSoft
+                                                )
+                                    ) {
+
+                                        Icon(
+                                            Icons.Default.KeyboardArrowDown,
+                                            contentDescription = null
+                                        )
+
+                                        Spacer(Modifier.width(6.dp))
+
+                                        Text("Volver al mapa")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+            ) { _ ->
+
+                // =====================================
+                // MAPLIBRE
+                // =====================================
+
+                Box(
+                    modifier = Modifier.fillMaxSize()
+                ) {
+
+                    AndroidView(
+                        factory = {
+
+                            (mapView.parent as? ViewGroup)
+                                ?.removeView(mapView)
+
+                            mapView
+                        },
+
+                        modifier = Modifier.fillMaxSize()
+                    )
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .align(Alignment.TopCenter)
+                            .statusBarsPadding()
+                            .padding(16.dp),
+
+                        horizontalArrangement =
+                            Arrangement.SpaceBetween
+                    ) {
+
+                        QMMapCircle(
+                            icon = Icons.Default.Menu,
+                            description = "Menú"
+                        ) {
+
+                            scope.launch {
+                                drawerState.open()
+                            }
+                        }
+
+                        Column(
+                            verticalArrangement =
+                                Arrangement.spacedBy(10.dp)
+                        ) {
+
+                            QMMapCircle(
+                                icon = Icons.Default.Layers,
+                                description = "Cambiar estilo"
+                            ) {
+
+                                darkMap = !darkMap
+
+                                onMapStyleChange(darkMap)
+                            }
+
+                            QMMapCircle(
+                                icon = Icons.Default.FlashOn,
+                                description = "Cargadores"
+                            ) {
+
+                                onShowChargersOnMap()
+                            }
+
+                            QMMapCircle(
+                                icon = Icons.Default.MyLocation,
+                                description = "Mi ubicación"
+                            ) {
+
+                                onReturnToCenter()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // =====================================
+        // BUSCADOR
+        // =====================================
+
+        if (mode == HomePanelMode.SEARCH) {
+
+            QMWazeSearch(
+                text = searchText,
+
+                onTextChange = {
+
+                    searchText = it
+                },
+
+                onBack = {
+
+                    closeSearch()
+                },
+
+                onPlaceSelected = { place ->
+
+                    selectPoint(
+                        place.toRoutePoint()
+                    )
+                },
+
+                recentDestinations =
+                    recentDestinations,
+
+                onRecentSelected = { point ->
+
+                    selectPoint(point)
+                },
+
+                onChargers = onOpenChargers
+            )
+        }
+    }
+}
+
+// =====================================
+// METRICAS DEL VIAJE
+// =====================================
+
+@Composable
+private fun QMTripMetrics(
+    plan: RoutePlanResult
+) {
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+
+        horizontalArrangement =
+            Arrangement.spacedBy(8.dp)
+    ) {
+
+        QMMetricCard(
+            title = "Tiempo",
+
+            value = qmTime(
+                plan.route.drivingMinutes
+            ),
+
+            icon = Icons.Default.Schedule,
+
+            modifier = Modifier.weight(1f)
+        )
+
+        QMMetricCard(
+            title = "Distancia",
+
+            value =
+                "${qmNumber(plan.route.distanceKm)} km",
+
+            icon = Icons.Default.Route,
+
+            modifier = Modifier.weight(1f)
+        )
+
+        QMMetricCard(
+            title = "Al llegar",
+
+            value = plan.battery
+                .estimatedArrivalPercent
+                ?.let {
+                    "${qmNumber(it)}%"
+                }
+                ?: "No alcanza",
+
+            icon = Icons.Default.BatteryChargingFull,
+
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
+// =====================================
+// CONSUMO ESTIMADO
+// =====================================
+
+@Composable
+private fun QMTripConsumption(
+    plan: RoutePlanResult
+) {
+
+    Surface(
+        color = QMCard,
+        shape = RoundedCornerShape(16.dp)
+    ) {
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+
+            verticalArrangement =
+                Arrangement.spacedBy(8.dp)
+        ) {
+
+            Text(
+                "Consumo estimado",
+                color = QMGray,
+                fontSize = 13.sp
+            )
+
+            Text(
+                "${qmNumber(plan.battery.energyRequiredKwh)} kWh",
+
+                color = QMWhite,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold
+            )
+
+            Text(
+                "Batería consumida: " +
+                        "${qmNumber(plan.battery.batteryUsedPercent)}%",
+
+                color = QMGray,
+                fontSize = 12.sp
+            )
+        }
+    }
+}
+
+// =====================================
+// MENSAJE DE BATERIA
+// =====================================
+
+@Composable
+private fun QMTripBatteryMessage(
+    plan: RoutePlanResult
+) {
+
+    if (plan.battery.canCompleteTrip) {
+
+        Row(
+            verticalAlignment =
+                Alignment.CenterVertically,
+
+            horizontalArrangement =
+                Arrangement.spacedBy(10.dp)
+        ) {
+
+            Icon(
+                Icons.Default.CheckCircle,
+                contentDescription = null,
+                tint = QMAccentSoft
+            )
+
+            Text(
+                "Tu batería alcanza para " +
+                        "llegar con la reserva prevista.",
+
+                color = QMWhite,
+                fontSize = 13.sp
+            )
+        }
+
+    } else {
+
+        Row(
+            verticalAlignment =
+                Alignment.CenterVertically,
+
+            horizontalArrangement =
+                Arrangement.spacedBy(10.dp)
+        ) {
+
+            Icon(
+                Icons.Default.Warning,
+                contentDescription = null,
+                tint = QMWarning
+            )
+
+            Text(
+                "Necesitas recargar durante el viaje.",
+
+                color = QMWarning,
+                fontWeight = FontWeight.Bold,
+                fontSize = 13.sp
+            )
+        }
+
+        Text(
+            "Energía adicional estimada: " +
+                    "${qmNumber(plan.battery.missingEnergyKwh)} kWh",
+
+            color = QMGray,
+            fontSize = 12.sp
+        )
+
+        Text(
+            "Las estaciones de carga sobre " +
+                    "el recorrido se agregarán después.",
+
+            color = QMGray,
+            fontSize = 12.sp
+        )
+    }
+}
+
+// =====================================
+// MI CARRO
+// =====================================
+
+@Composable
+private fun QMMyCarSection(
+    vehicleName: String,
+    batteryPercent: Float,
+    onBatteryChange: (Float) -> Unit,
+    onOpenEditor: () -> Unit
+) {
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+
+        verticalArrangement =
+            Arrangement.spacedBy(10.dp)
+    ) {
+
+        Text(
+            "Mi carro",
+            color = QMWhite,
+            fontSize = 19.sp,
+            fontWeight = FontWeight.Bold
+        )
+
+        Surface(
+            color = QMCard,
+            shape = RoundedCornerShape(20.dp),
+
+            border = BorderStroke(
+                1.dp,
+                QMLine
+            )
+        ) {
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+
+                verticalArrangement =
+                    Arrangement.spacedBy(10.dp)
             ) {
 
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(20.dp),
+                        .clickable {
 
-                    verticalAlignment = Alignment.CenterVertically,
+                            onOpenEditor()
+                        },
+
+                    verticalAlignment =
+                        Alignment.CenterVertically,
 
                     horizontalArrangement =
                         Arrangement.SpaceBetween
                 ) {
 
-                    Text(
-                        text = "QuackMove",
-                        fontSize = 22.sp,
-                        color = PrimaryText
-                    )
-
-                    IconButton(
-                        onClick = {
-                            scope.launch {
-                                drawerState.close()
-                            }
-                        }
+                    Column(
+                        modifier = Modifier.weight(1f)
                     ) {
 
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Cerrar menú",
-                            tint = PrimaryText
-                        )
-                    }
-                }
-
-                HorizontalDivider(
-                    color = ButtonBorder
-                )
-
-                NavigationDrawerItem(
-                    label = {
-                        Text("Mapa principal")
-                    },
-
-                    selected = true,
-
-                    onClick = {
-                        scope.launch {
-                            drawerState.close()
-                        }
-                    },
-
-                    modifier = Modifier.padding(12.dp)
-                )
-
-                NavigationDrawerItem(
-                    label = {
-                        Text("Crear cuenta")
-                    },
-
-                    icon = {
-                        Icon(
-                            imageVector = Icons.Default.PersonAdd,
-                            contentDescription = null
-                        )
-                    },
-
-                    selected = false,
-
-                    onClick = {
-                        scope.launch {
-                            drawerState.close()
-                            onOpenRegistration()
-                        }
-                    },
-
-                    modifier = Modifier.padding(
-                        horizontal = 12.dp
-                    )
-                )
-
-                HorizontalDivider(
-                    modifier = Modifier.padding(vertical = 16.dp),
-                    color = ButtonBorder
-                )
-
-                Text(
-                    text = "Mi vehículo, favoritos y configuración " +
-                            "estarán disponibles próximamente.",
-                    modifier = Modifier.padding(20.dp),
-                    color = SecondaryText,
-                    fontSize = 14.sp
-                )
-            }
-        }
-    ) {
-
-        // =====================================
-        // PANEL INFERIOR DE BÚSQUEDA
-        // =====================================
-
-        BottomSheetScaffold(
-            scaffoldState = scaffoldState,
-
-            sheetPeekHeight = 104.dp,
-
-            sheetContainerColor = PanelBackground,
-
-            sheetContentColor = PrimaryText,
-
-            sheetShape = RoundedCornerShape(
-                topStart = 28.dp,
-                topEnd = 28.dp
-            ),
-
-            sheetDragHandle = null,
-
-            sheetContent = {
-
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 430.dp)
-                        .navigationBarsPadding()
-                        .verticalScroll(rememberScrollState())
-                        .padding(
-                            start = 18.dp,
-                            end = 18.dp,
-                            top = 12.dp,
-                            bottom = 20.dp
-                        )
-                ) {
-
-                    // Barra para expandir el panel
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.CenterHorizontally)
-                            .width(46.dp)
-                            .height(4.dp)
-                            .background(
-                                color = Color(0xFF7985AC),
-                                shape = CircleShape
-                            )
-                            .clickable {
-                                scope.launch {
-                                    scaffoldState
-                                        .bottomSheetState
-                                        .expand()
-                                }
-                            }
-                    )
-
-                    Spacer(
-                        modifier = Modifier.height(16.dp)
-                    )
-
-                    // =====================================
-                    // BÚSQUEDA DE DESTINOS
-                    // =====================================
-
-                    DestinationSearchBar(
-                        text = searchText,
-                        expanded = searchExpanded,
-
-                        onTextChange = { newText ->
-                            model.updateSearchText(newText)
-                        },
-
-                        onExpand = {
-                            scope.launch {
-                                scaffoldState
-                                    .bottomSheetState
-                                    .expand()
-                            }
-                        }
-                    )
-
-                    Spacer(
-                        modifier = Modifier.height(26.dp)
-                    )
-
-                    // =====================================
-                    // DESTINOS Y RECIENTES
-                    // =====================================
-
-                    if (searchText.isBlank()) {
-
                         Text(
-                            text = "Tus destinos",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = PrimaryText
-                        )
-
-                        Spacer(
-                            modifier = Modifier.height(12.dp)
-                        )
-
-                        QuickDestinations(
-                            onDestinationSelected = { destination ->
-
-                                if (destination == "Cargadores") {
-                                    onOpenChargers()
-                                } else {
-                                    onOpenRoute(destination)
-                                }
-                            }
-                        )
-
-                        Spacer(
-                            modifier = Modifier.height(24.dp)
-                        )
-
-                        RecentDestinations(
-                            destinations = state.recentDestinations,
-
-                            onDestinationSelected = { destination ->
-                                onOpenRoute(destination.name)
+                            vehicleName.ifBlank {
+                                "Configurar mi carro"
                             },
 
-                            onViewAll = {
-                                scope.launch {
-                                    snackbarHostState.showSnackbar(
-                                        "Mostrando todos los destinos recientes"
-                                    )
-                                }
-                            }
+                            color = QMWhite,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp,
+
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
-
-                    } else {
-
-                        // =====================================
-                        // RESULTADOS DE BÚSQUEDA
-                        // =====================================
-
-                        val results = state.searchResults
 
                         Text(
-                            text = "Resultados de búsqueda",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = PrimaryText
+                            "Toca para editar el vehículo",
+                            color = QMGray,
+                            fontSize = 11.sp
                         )
-
-                        Spacer(
-                            modifier = Modifier.height(12.dp)
-                        )
-
-                        if (results.isEmpty()) {
-
-                            Text(
-                                text = "No se encontraron destinos.",
-                                color = SecondaryText,
-                                modifier = Modifier.padding(
-                                    vertical = 16.dp
-                                )
-                            )
-
-                        } else {
-
-                            results.forEach { place ->
-
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable {
-                                            onOpenRoute(place.first)
-                                        }
-                                        .padding(vertical = 12.dp),
-
-                                    verticalAlignment =
-                                        Alignment.CenterVertically
-                                ) {
-
-                                    Icon(
-                                        imageVector = Icons.Default.Place,
-                                        contentDescription = null,
-                                        tint = Purple,
-                                        modifier = Modifier.size(24.dp)
-                                    )
-
-                                    Spacer(
-                                        modifier = Modifier.width(14.dp)
-                                    )
-
-                                    Column(
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-
-                                        Text(
-                                            text = place.first,
-                                            color = PrimaryText,
-                                            fontSize = 15.sp
-                                        )
-
-                                        Text(
-                                            text = place.second,
-                                            color = SecondaryText,
-                                            fontSize = 12.sp
-                                        )
-                                    }
-                                }
-
-                                HorizontalDivider(
-                                    color = ButtonBorder
-                                )
-                            }
-                        }
                     }
+
+                    Icon(
+                        Icons.Default.KeyboardArrowDown,
+                        contentDescription = "Editar vehículo",
+                        tint = QMAccentSoft
+                    )
                 }
-            },
 
-            snackbarHost = {
-                SnackbarHost(
-                    hostState = snackbarHostState
-                )
-            }
-
-        ) { _ ->
-
-            // =====================================
-            // MAPA PRINCIPAL
-            // =====================================
-
-            Box(
-                modifier = Modifier.fillMaxSize()
-            ) {
-
-                AndroidView(
-                    factory = {
-
-                        (mapView.parent as? ViewGroup)
-                            ?.removeView(mapView)
-
-                        mapView
-                    },
-
-                    modifier = Modifier.fillMaxSize()
-                )
-
-                // Botones flotantes del mapa
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .align(Alignment.TopCenter)
-                        .statusBarsPadding()
-                        .padding(
-                            start = 16.dp,
-                            end = 16.dp,
-                            top = 16.dp
-                        ),
+                    modifier = Modifier.fillMaxWidth(),
 
                     horizontalArrangement =
                         Arrangement.SpaceBetween,
 
-                    verticalAlignment = Alignment.Top
+                    verticalAlignment =
+                        Alignment.CenterVertically
                 ) {
 
-                    // Abrir menú lateral
-                    MapActionButton(
-                        icon = Icons.Default.Menu,
-                        descripcion = "Abrir menú",
-                        iconColor = PrimaryText,
-                        circular = false,
-
-                        onClick = {
-                            scope.launch {
-                                drawerState.open()
-                            }
-                        }
+                    Text(
+                        "Batería",
+                        color = QMGray
                     )
 
-                    Column(
-                        verticalArrangement =
-                            Arrangement.spacedBy(12.dp)
-                    ) {
-
-                        // =====================================
-                        // CAMBIAR ESTILO DEL MAPA
-                        // =====================================
-
-                        MapActionButton(
-                            icon = Icons.Default.Layers,
-                            descripcion = "Cambiar estilo del mapa",
-                            iconColor = PrimaryText,
-
-                            onClick = {
-                                onMapStyleChange(
-                                    model.toggleDarkMap()
-                                )
-                            }
-                        )
-
-                        // =====================================
-                        // ABRIR CARGADORES
-                        // =====================================
-
-                        MapActionButton(
-                            icon = Icons.Default.FlashOn,
-                            descripcion = "Mostrar cargadores",
-                            iconColor = MintGreen,
-
-                            onClick = {
-                                onOpenChargers()
-                            }
-                        )
-
-                        // =====================================
-                        // CENTRAR MAPA
-                        // =====================================
-
-                        MapActionButton(
-                            icon = Icons.Default.Navigation,
-                            descripcion = "Volver a Villa Nueva",
-                            iconColor = Purple,
-
-                            onClick = {
-
-                                onReturnToCenter()
-
-                                scope.launch {
-                                    snackbarHostState.showSnackbar(
-                                        "Mapa centrado en Villa Nueva"
-                                    )
-                                }
-                            }
-                        )
-                    }
+                    Text(
+                        "${batteryPercent.roundToInt()}%",
+                        color = QMAccentSoft,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
+
+                Slider(
+                    value = batteryPercent,
+                    onValueChange = onBatteryChange,
+                    valueRange = 0f..100f,
+                    steps = 99,
+
+                    colors = SliderDefaults.colors(
+                        thumbColor = QMWhite,
+                        activeTrackColor = QMAccent,
+                        inactiveTrackColor = QMLine,
+                        activeTickColor = Color.Transparent,
+                        inactiveTickColor = Color.Transparent
+                    )
+                )
             }
         }
     }
 }
 
 // =====================================
-// COMPONENTE REUTILIZABLE
-// BOTÓN FLOTANTE DEL MAPA
+// EDITAR MI CARRO
+// =====================================
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun QMVehicleEditorSheet(
+    initialName: String,
+    initialBattery: Float,
+    onDismiss: () -> Unit,
+    onSave: (String, Float) -> Unit
+) {
+
+    var editedName by remember(initialName) {
+        mutableStateOf(initialName)
+    }
+
+    var editedBattery by remember(initialBattery) {
+        mutableFloatStateOf(initialBattery)
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = QMPanel,
+        contentColor = QMWhite
+    ) {
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(20.dp),
+
+            verticalArrangement =
+                Arrangement.spacedBy(14.dp)
+        ) {
+
+            Text(
+                "Mi carro",
+                color = QMWhite,
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold
+            )
+
+            OutlinedTextField(
+                value = editedName,
+
+                onValueChange = {
+
+                    editedName = it
+                },
+
+                label = {
+                    Text("Nombre del vehículo")
+                },
+
+                placeholder = {
+                    Text("Ej. Audi e-tron")
+                },
+
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = QMAccent,
+                    unfocusedBorderColor = QMLine,
+                    focusedTextColor = QMWhite,
+                    unfocusedTextColor = QMWhite
+                )
+            )
+
+            Text(
+                "Batería: ${editedBattery.roundToInt()}%",
+                color = QMAccentSoft,
+                fontWeight = FontWeight.Bold
+            )
+
+            Slider(
+                value = editedBattery,
+
+                onValueChange = {
+
+                    editedBattery =
+                        it.roundToInt().toFloat()
+                },
+
+                valueRange = 0f..100f,
+                steps = 99,
+
+                colors = SliderDefaults.colors(
+                    thumbColor = QMWhite,
+                    activeTrackColor = QMAccent,
+                    inactiveTrackColor = QMLine
+                )
+            )
+
+            Button(
+                onClick = {
+
+                    onSave(
+                        editedName.trim(),
+                        editedBattery
+                    )
+                },
+
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = QMAccent
+                )
+            ) {
+
+                Text("Guardar cambios")
+            }
+        }
+    }
+}
+
+// =====================================
+// BUSQUEDA ESTILO WAZE
 // =====================================
 
 @Composable
-fun MapActionButton(
+private fun QMWazeSearch(
+    text: String,
+    onTextChange: (String) -> Unit,
+    onBack: () -> Unit,
+    onPlaceSelected: (PlaceSearchResult) -> Unit,
+    recentDestinations: List<RoutePoint>,
+    onRecentSelected: (RoutePoint) -> Unit,
+    onChargers: () -> Unit
+) {
+
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = QMPanel
+    ) {
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .imePadding()
+                .verticalScroll(
+                    rememberScrollState()
+                )
+                .padding(16.dp),
+
+            verticalArrangement =
+                Arrangement.spacedBy(18.dp)
+        ) {
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Top
+            ) {
+
+                IconButton(
+                    modifier = Modifier.padding(top = 8.dp),
+                    onClick = onBack
+                ) {
+
+                    Icon(
+                        Icons.Default.ArrowBack,
+                        contentDescription = "Volver",
+                        tint = QMWhite
+                    )
+                }
+
+                PlaceSearchField(
+                    label = "¿A dónde vas?",
+                    value = text,
+                    onValueChange = onTextChange,
+                    onPlaceSelected = onPlaceSelected,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            Row(
+                horizontalArrangement =
+                    Arrangement.spacedBy(8.dp)
+            ) {
+
+                QMShortcut(
+                    title = "Guardados",
+                    icon = Icons.Default.Bookmark,
+                    modifier = Modifier.weight(1f)
+                )
+
+                QMShortcut(
+                    title = "Casa",
+                    icon = Icons.Default.Home,
+                    modifier = Modifier.weight(1f)
+                )
+
+                QMShortcut(
+                    title = "Trabajo",
+                    icon = Icons.Default.Work,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            HorizontalDivider(color = QMLine)
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        onChargers()
+                    }
+                    .padding(vertical = 12.dp),
+
+                verticalAlignment =
+                    Alignment.CenterVertically,
+
+                horizontalArrangement =
+                    Arrangement.spacedBy(14.dp)
+            ) {
+
+                Icon(
+                    Icons.Default.EvStation,
+                    contentDescription = null,
+                    tint = QMAccentSoft,
+                    modifier = Modifier.size(28.dp)
+                )
+
+                Column(
+                    modifier = Modifier.weight(1f)
+                ) {
+
+                    Text(
+                        "Estaciones de carga",
+                        color = QMWhite,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Text(
+                        "Buscar cargadores cercanos",
+                        color = QMGray,
+                        fontSize = 12.sp
+                    )
+                }
+
+                Icon(
+                    Icons.Default.ChevronRight,
+                    contentDescription = null,
+                    tint = QMGray
+                )
+            }
+
+            HorizontalDivider(color = QMLine)
+
+            Text(
+                "Recientes",
+                color = QMGray,
+                fontSize = 14.sp
+            )
+
+            if (recentDestinations.isEmpty()) {
+
+                Text(
+                    "Todavía no hay destinos recientes.",
+                    color = QMGray,
+                    fontSize = 13.sp
+                )
+
+            } else {
+
+                recentDestinations
+                    .take(12)
+                    .forEach { point ->
+
+                        QMRecentRow(
+                            point = point,
+
+                            onClick = {
+
+                                onRecentSelected(point)
+                            }
+                        )
+
+                        HorizontalDivider(
+                            color = QMLine
+                        )
+                    }
+            }
+        }
+    }
+}
+
+// =====================================
+// TARJETA DE METRICAS
+// =====================================
+
+@Composable
+private fun QMMetricCard(
+    title: String,
+    value: String,
     icon: ImageVector,
-    descripcion: String,
-    iconColor: Color,
-    circular: Boolean = true,
+    modifier: Modifier = Modifier
+) {
+
+    Surface(
+        modifier = modifier,
+        color = QMCard,
+        shape = RoundedCornerShape(14.dp)
+    ) {
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(
+                    horizontal = 6.dp,
+                    vertical = 12.dp
+                ),
+
+            horizontalAlignment =
+                Alignment.CenterHorizontally,
+
+            verticalArrangement =
+                Arrangement.spacedBy(6.dp)
+        ) {
+
+            Icon(
+                icon,
+                contentDescription = null,
+                tint = QMAccentSoft,
+                modifier = Modifier.size(20.dp)
+            )
+
+            Text(
+                value,
+                color = QMWhite,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 2
+            )
+
+            Text(
+                title,
+                color = QMGray,
+                fontSize = 11.sp
+            )
+        }
+    }
+}
+
+// =====================================
+// ACCESO RAPIDO
+// =====================================
+
+@Composable
+private fun QMShortcut(
+    title: String,
+    icon: ImageVector,
+    modifier: Modifier = Modifier
+) {
+
+    Surface(
+        modifier = modifier.height(94.dp),
+        shape = RoundedCornerShape(18.dp),
+        color = QMCard
+    ) {
+
+        Column(
+            horizontalAlignment =
+                Alignment.CenterHorizontally,
+
+            verticalArrangement =
+                Arrangement.Center
+        ) {
+
+            Icon(
+                icon,
+                contentDescription = null,
+                tint = QMAccentSoft,
+                modifier = Modifier.size(26.dp)
+            )
+
+            Spacer(Modifier.height(8.dp))
+
+            Text(
+                title,
+                color = QMWhite,
+                fontSize = 13.sp
+            )
+        }
+    }
+}
+
+// =====================================
+// ENCABEZADO
+// =====================================
+
+@Composable
+private fun QMHeader(
+    title: String,
+    onBack: () -> Unit
+) {
+
+    Row(
+        verticalAlignment =
+            Alignment.CenterVertically
+    ) {
+
+        IconButton(
+            onClick = onBack
+        ) {
+
+            Icon(
+                Icons.Default.ArrowBack,
+                contentDescription = "Volver",
+                tint = QMWhite
+            )
+        }
+
+        Text(
+            title,
+            color = QMWhite,
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+// =====================================
+// DESTINO RECIENTE
+// =====================================
+
+@Composable
+private fun QMRecentRow(
+    point: RoutePoint,
     onClick: () -> Unit
 ) {
 
-    val forma = if (circular) {
-        CircleShape
-    } else {
-        RoundedCornerShape(16.dp)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp),
+
+        verticalAlignment =
+            Alignment.CenterVertically,
+
+        horizontalArrangement =
+            Arrangement.spacedBy(14.dp)
+    ) {
+
+        Icon(
+            Icons.Default.History,
+            contentDescription = null,
+            tint = QMAccentSoft,
+            modifier = Modifier.size(25.dp)
+        )
+
+        Text(
+            point.name,
+            modifier = Modifier.weight(1f),
+            color = QMWhite,
+            fontSize = 15.sp,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+
+        Icon(
+            Icons.Default.ChevronRight,
+            contentDescription = null,
+            tint = QMGray
+        )
     }
+}
+
+// =====================================
+// ORIGEN / DESTINO
+// =====================================
+
+@Composable
+private fun QMLocationRow(
+    title: String,
+    value: String,
+    icon: ImageVector,
+    onClick: () -> Unit
+) {
+
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(17.dp),
+        color = QMCard
+    ) {
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(15.dp),
+
+            verticalAlignment =
+                Alignment.CenterVertically,
+
+            horizontalArrangement =
+                Arrangement.spacedBy(12.dp)
+        ) {
+
+            Icon(
+                icon,
+                contentDescription = null,
+                tint = QMAccentSoft
+            )
+
+            Column(
+                modifier = Modifier.weight(1f)
+            ) {
+
+                Text(
+                    title,
+                    color = QMGray,
+                    fontSize = 11.sp
+                )
+
+                Text(
+                    value,
+                    color = QMWhite,
+                    fontSize = 15.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Icon(
+                Icons.Default.ChevronRight,
+                contentDescription = null,
+                tint = QMGray
+            )
+        }
+    }
+}
+
+// =====================================
+// RESUMEN DE VIAJE
+// =====================================
+
+@Composable
+private fun QMSummaryText(
+    title: String,
+    value: String
+) {
+
+    Column(
+        verticalArrangement =
+            Arrangement.spacedBy(4.dp)
+    ) {
+
+        Text(
+            title,
+            color = QMGray,
+            fontSize = 12.sp
+        )
+
+        Text(
+            value,
+            color = QMWhite,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.Medium
+        )
+    }
+}
+
+// =====================================
+// BOTONES DEL MAPA
+// =====================================
+
+@Composable
+private fun QMMapCircle(
+    icon: ImageVector,
+    description: String,
+    onClick: () -> Unit
+) {
 
     Surface(
         modifier = Modifier.size(52.dp),
-        shape = forma,
-        color = ButtonBackground,
+        shape = CircleShape,
+        color = QMDark,
+
         border = BorderStroke(
-            width = 1.dp,
-            color = ButtonBorder
+            1.dp,
+            QMLine
         ),
-        shadowElevation = 6.dp,
+
+        shadowElevation = 5.dp,
         onClick = onClick
     ) {
 
@@ -558,10 +2642,10 @@ fun MapActionButton(
         ) {
 
             Icon(
-                imageVector = icon,
-                contentDescription = descripcion,
-                tint = iconColor,
-                modifier = Modifier.size(26.dp)
+                icon,
+                contentDescription = description,
+                tint = QMAccentSoft,
+                modifier = Modifier.size(25.dp)
             )
         }
     }

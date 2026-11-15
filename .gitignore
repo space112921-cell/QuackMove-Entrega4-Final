@@ -7,22 +7,27 @@
 .externalNativeBuild
 .cxx
 
-# Archivos generados por Android Studio
+node_modules/
+.env
+*.jks
+*.keystore
+*.pem
+*.p12
+
+# Dependencias
+node_modules/
+
+# Archivos generados
+**/build/
 .gradle/
 .idea/
 .kotlin/
-**/build/
-local.properties
 
-# Archivos privados
+# Archivos locales y secretos
+local.properties
 .env
-.env.*
-key.properties
 *.jks
 *.keystore
+*.pem
+*.p12
 
-# Archivos temporales
-*.log
-*.apk
-*.aab
-errores-kotlin.txt

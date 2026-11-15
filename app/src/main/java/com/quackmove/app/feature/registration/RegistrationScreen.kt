@@ -6,12 +6,17 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+
 import androidx.compose.material3.*
+
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -20,18 +25,35 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
+import com.quackmove.app.data.repository.FirebaseRegistrationRepository
 
 // =====================================
 // COLORES DE QUACKMOVE
 // =====================================
 
-private val RegistrationBackground = Color(0xFF101928)
-private val RegistrationText = Color(0xFFF5F6FF)
-private val RegistrationSecondaryText = Color(0xFFB6C2DF)
-private val RegistrationPurple = Color(0xFF8066F5)
-private val RegistrationGreen = Color(0xFF43E6B3)
+private val RegistrationBackground =
+    Color(0xFF101928)
+
+private val RegistrationText =
+    Color(0xFFF5F6FF)
+
+private val RegistrationSecondaryText =
+    Color(0xFFB6C2DF)
+
+private val RegistrationPurple =
+    Color(0xFF8066F5)
+
+private val RegistrationGreen =
+    Color(0xFF43E6B3)
+
+private val RegistrationError =
+    Color(0xFFFFB86B)
 
 // =====================================
 // PANTALLA DE REGISTRO
@@ -42,10 +64,34 @@ fun RegistrationScreen(
     onBack: () -> Unit = {}
 ) {
 
-    val model: RegistrationViewModel = viewModel()
+    // =================================
+    // INYECCION DEL REPOSITORY
+    // =================================
 
-    // Observar StateFlow del ViewModel.
-    val state by model.uiState.collectAsStateWithLifecycle()
+    val factory = remember {
+
+        RegistrationViewModelFactory(
+            repository = FirebaseRegistrationRepository(
+                auth = FirebaseAuth.getInstance(),
+                firestore = FirebaseFirestore.getInstance()
+            )
+        )
+    }
+
+    val model: RegistrationViewModel = viewModel(
+        factory = factory
+    )
+
+    // =================================
+    // OBSERVAR STATEFLOW
+    // =================================
+
+    val state by model.uiState
+        .collectAsStateWithLifecycle()
+
+    val fieldsEnabled =
+        !state.isLoading &&
+                !state.accountCreated
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -55,69 +101,87 @@ fun RegistrationScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .verticalScroll(
+                    rememberScrollState()
+                )
                 .padding(
                     horizontal = 24.dp,
-                    vertical = 32.dp
+                    vertical = 24.dp
                 ),
+
             horizontalAlignment =
-                Alignment.CenterHorizontally
+                Alignment.CenterHorizontally,
+
+            verticalArrangement =
+                Arrangement.spacedBy(12.dp)
         ) {
 
-            // =====================================
-            // NAVEGACIÓN
-            // =====================================
+            // =================================
+            // VOLVER
+            // =================================
 
             TextButton(
                 onClick = onBack,
-                modifier = Modifier.align(Alignment.Start)
+                modifier = Modifier
+                    .align(Alignment.Start)
             ) {
 
                 Text(
-                    text = "← Volver",
+                    "← Volver",
                     color = RegistrationPurple
                 )
             }
 
             Spacer(
-                modifier = Modifier.height(24.dp)
+                Modifier.height(8.dp)
             )
 
-            // =====================================
-            // ENCABEZADO
-            // =====================================
+            // =================================
+            // TITULO
+            // =================================
 
             Text(
                 text = "Regístrate",
                 color = RegistrationText,
-                style = MaterialTheme.typography.headlineLarge
+                style = MaterialTheme
+                    .typography.headlineLarge
             )
 
             Text(
-                text = "Crea tu cuenta para comenzar.",
+                text = "Crea tu cuenta en QuackMove.",
                 color = RegistrationSecondaryText,
                 fontSize = 15.sp
             )
 
             Spacer(
-                modifier = Modifier.height(32.dp)
+                Modifier.height(12.dp)
             )
 
-            // =====================================
+            // =================================
             // NOMBRE DE USUARIO
-            // =====================================
+            // =================================
 
             OutlinedTextField(
                 value = state.username,
-                onValueChange = model::updateUsername,
+
+                onValueChange =
+                    model::updateUsername,
+
+                enabled = fieldsEnabled,
+
                 label = {
                     Text("Nombre de usuario")
                 },
-                modifier = Modifier.fillMaxWidth(),
+
                 singleLine = true,
 
-                isError = state.username.isNotEmpty() &&
-                        !state.validUsername,
+                modifier = Modifier.fillMaxWidth(),
+
+                isError =
+                    state.username.isNotEmpty() &&
+                            !state.validUsername,
 
                 supportingText = {
 
@@ -135,29 +199,33 @@ fun RegistrationScreen(
                 shape = RoundedCornerShape(14.dp)
             )
 
-            Spacer(
-                modifier = Modifier.height(8.dp)
-            )
-
-            // =====================================
-            // CORREO ELECTRÓNICO
-            // =====================================
+            // =================================
+            // CORREO ELECTRONICO
+            // =================================
 
             OutlinedTextField(
                 value = state.email,
-                onValueChange = model::updateEmail,
+
+                onValueChange =
+                    model::updateEmail,
+
+                enabled = fieldsEnabled,
+
                 label = {
                     Text("Correo electrónico")
                 },
-                modifier = Modifier.fillMaxWidth(),
+
                 singleLine = true,
+
+                modifier = Modifier.fillMaxWidth(),
 
                 keyboardOptions = KeyboardOptions(
                     keyboardType = KeyboardType.Email
                 ),
 
-                isError = state.email.isNotEmpty() &&
-                        !state.validEmail,
+                isError =
+                    state.email.isNotEmpty() &&
+                            !state.validEmail,
 
                 supportingText = {
 
@@ -175,22 +243,25 @@ fun RegistrationScreen(
                 shape = RoundedCornerShape(14.dp)
             )
 
-            Spacer(
-                modifier = Modifier.height(8.dp)
-            )
-
-            // =====================================
+            // =================================
             // CONTRASEÑA
-            // =====================================
+            // =================================
 
             OutlinedTextField(
                 value = state.password,
-                onValueChange = model::updatePassword,
+
+                onValueChange =
+                    model::updatePassword,
+
+                enabled = fieldsEnabled,
+
                 label = {
                     Text("Contraseña")
                 },
-                modifier = Modifier.fillMaxWidth(),
+
                 singleLine = true,
+
+                modifier = Modifier.fillMaxWidth(),
 
                 visualTransformation =
                     if (state.showPassword) {
@@ -206,7 +277,8 @@ fun RegistrationScreen(
                 trailingIcon = {
 
                     IconButton(
-                        onClick = model::toggleShowPassword
+                        onClick =
+                            model::toggleShowPassword
                     ) {
 
                         Icon(
@@ -223,8 +295,9 @@ fun RegistrationScreen(
                     }
                 },
 
-                isError = state.password.isNotEmpty() &&
-                        !state.validPassword,
+                isError =
+                    state.password.isNotEmpty() &&
+                            !state.validPassword,
 
                 supportingText = {
 
@@ -242,24 +315,25 @@ fun RegistrationScreen(
                 shape = RoundedCornerShape(14.dp)
             )
 
-            Spacer(
-                modifier = Modifier.height(8.dp)
-            )
-
-            // =====================================
-            // CONFIRMAR CONTRASEÑA
-            // =====================================
+            // =================================
+            // CONFIRMACION DE CONTRASEÑA
+            // =================================
 
             OutlinedTextField(
                 value = state.confirmPassword,
-                onValueChange = model::updateConfirmPassword,
+
+                onValueChange =
+                    model::updateConfirmPassword,
+
+                enabled = fieldsEnabled,
 
                 label = {
                     Text("Confirmar contraseña")
                 },
 
-                modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
+
+                modifier = Modifier.fillMaxWidth(),
 
                 visualTransformation =
                     if (state.showConfirmation) {
@@ -275,7 +349,8 @@ fun RegistrationScreen(
                 trailingIcon = {
 
                     IconButton(
-                        onClick = model::toggleShowConfirmation
+                        onClick =
+                            model::toggleShowConfirmation
                     ) {
 
                         Icon(
@@ -312,21 +387,22 @@ fun RegistrationScreen(
                 shape = RoundedCornerShape(14.dp)
             )
 
-            Spacer(
-                modifier = Modifier.height(12.dp)
-            )
-
-            // =====================================
-            // TÉRMINOS Y CONDICIONES
-            // =====================================
+            // =================================
+            // TERMINOS
+            // =================================
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+
+                verticalAlignment =
+                    Alignment.CenterVertically
             ) {
 
                 Checkbox(
                     checked = state.acceptedTerms,
+
+                    enabled = fieldsEnabled,
+
                     onCheckedChange =
                         model::updateAcceptedTerms
                 )
@@ -338,51 +414,154 @@ fun RegistrationScreen(
                 )
             }
 
-            Spacer(
-                modifier = Modifier.height(24.dp)
-            )
+            // =================================
+            // ERROR DE FIREBASE
+            // =================================
 
-            // =====================================
-            // BOTÓN CREAR CUENTA
-            // =====================================
-
-            Button(
-                onClick = model::submit,
-                enabled = state.validForm,
-
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(54.dp),
-
-                shape = RoundedCornerShape(14.dp),
-
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = RegistrationPurple
-                )
-            ) {
+            state.errorMessage?.let { error ->
 
                 Text(
-                    text = "Crear cuenta",
-                    fontSize = 16.sp
+                    text = error,
+                    color = RegistrationError,
+                    fontSize = 13.sp,
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
 
-            // =====================================
-            // CONFIRMACIÓN DEL FORMULARIO
-            // =====================================
+            // =================================
+            // MENSAJE DE EXITO
+            // =================================
 
             if (state.registrationComplete) {
 
-                Spacer(
-                    modifier = Modifier.height(16.dp)
+                Text(
+                    text = state.successMessage
+                        ?: "Cuenta creada correctamente.",
+
+                    color = RegistrationGreen,
+
+                    fontSize = 14.sp,
+
+                    modifier = Modifier.fillMaxWidth()
                 )
 
                 Text(
-                    text = "Registro de prueba completado correctamente.",
-                    color = RegistrationGreen,
-                    fontSize = 14.sp
+                    text = "Tu perfil ya está asociado " +
+                            "a tu cuenta de Firebase.",
+
+                    color = RegistrationSecondaryText,
+
+                    fontSize = 13.sp
                 )
             }
+
+            // =================================
+            // INDICADOR DE CARGA
+            // =================================
+
+            if (state.isLoading) {
+
+                CircularProgressIndicator(
+                    color = RegistrationPurple
+                )
+
+                Text(
+                    text = "Comunicando con Firebase...",
+                    color = RegistrationSecondaryText,
+                    fontSize = 13.sp
+                )
+            }
+
+            // =================================
+            // BOTON CREAR CUENTA
+            // =================================
+
+            if (!state.accountCreated) {
+
+                Button(
+                    onClick = model::submit,
+
+                    enabled = state.validForm,
+
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(54.dp),
+
+                    shape = RoundedCornerShape(14.dp),
+
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = RegistrationPurple
+                    )
+                ) {
+
+                    Text(
+                        text = "Crear cuenta",
+                        fontSize = 16.sp
+                    )
+                }
+            }
+
+            // =================================
+            // REINTENTAR PERFIL
+            // =================================
+
+            if (
+                state.accountCreated &&
+                !state.registrationComplete
+            ) {
+
+                Button(
+                    onClick =
+                        model::retrySaveProfile,
+
+                    enabled = !state.isLoading,
+
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(54.dp),
+
+                    shape = RoundedCornerShape(14.dp),
+
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = RegistrationPurple
+                    )
+                ) {
+
+                    Text(
+                        "Reintentar guardar perfil"
+                    )
+                }
+            }
+
+            // =================================
+            // VOLVER AL MAPA
+            // =================================
+
+            if (state.registrationComplete) {
+
+                Button(
+                    onClick = onBack,
+
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(54.dp),
+
+                    shape = RoundedCornerShape(14.dp),
+
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = RegistrationPurple
+                    )
+                ) {
+
+                    Text(
+                        "Continuar a QuackMove"
+                    )
+                }
+            }
+
+            Spacer(
+                Modifier.height(12.dp)
+            )
         }
     }
 }
