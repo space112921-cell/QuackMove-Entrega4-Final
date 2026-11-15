@@ -7,7 +7,6 @@ import com.google.firebase.auth.FirebaseAuth
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
-import kotlinx.coroutines.withContext
 
 import org.json.JSONObject
 
@@ -69,7 +68,10 @@ object GoogleRoutesRepository : RoutesRepository {
     override suspend fun fetchRoute(
         origin: RoutePoint,
         destination: RoutePoint
-    ): RouteSummary = withContext(Dispatchers.IO) {
+    ): RouteSummary = withErrorReporting(
+        "GoogleRoutesRepository.fetchRoute",
+        Dispatchers.IO
+    ) {
 
         require(origin.isValid()) {
             "El origen no tiene coordenadas válidas"

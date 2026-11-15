@@ -50,7 +50,9 @@ class SmartChargingViewModel(
     fun calculate(
         origin: RoutePoint,
         destination: RoutePoint,
-        departurePercent: Float
+        departurePercent: Float,
+        usableBatteryKwh: Double,
+        consumptionKwhPer100Km: Double
     ) {
 
         calculation?.cancel()
@@ -64,9 +66,11 @@ class SmartChargingViewModel(
             try {
 
                 val result = repository.plan(
-                    origin,
-                    destination,
-                    departurePercent
+                    origin = origin,
+                    destination = destination,
+                    departurePercent = departurePercent,
+                    usableBatteryKwh = usableBatteryKwh,
+                    consumptionKwhPer100Km = consumptionKwhPer100Km
                 )
 
                 _uiState.value = SmartChargingUiState(

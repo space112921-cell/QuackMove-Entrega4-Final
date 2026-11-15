@@ -119,7 +119,7 @@ fun RoutesScreen(
             )
 
             // Vista previa del mapa
-            GoogleMapPreview(
+            RouteMapPreview(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(300.dp)

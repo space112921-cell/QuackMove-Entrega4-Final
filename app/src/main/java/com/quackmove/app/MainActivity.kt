@@ -74,6 +74,10 @@ import com.quackmove.app.feature.home.SmartChargingViewModelFactory
 import com.quackmove.app.feature.routes.RoutePolylineDecoder
 
 import com.quackmove.app.navigation.QuackMoveNavigation
+import com.quackmove.app.data.repository.QuackMoveDependencies
+import com.quackmove.app.feature.vehicle.VehicleViewModel
+import com.quackmove.app.feature.vehicle.VehicleViewModelFactory
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.quackmove.app.ui.theme.QuackMoveTheme
 
 import kotlinx.coroutines.CancellationException
@@ -154,6 +158,17 @@ class MainActivity : ComponentActivity() {
                     )
                 }
             )
+        )
+    }
+
+    // =====================================
+    // MI CARRO (CATALOGO)
+    // =====================================
+
+    private val vehicleViewModel: VehicleViewModel by viewModels {
+
+        VehicleViewModelFactory(
+            QuackMoveDependencies.vehicleRepository(applicationContext)
         )
     }
 
@@ -529,6 +544,34 @@ class MainActivity : ComponentActivity() {
                                 )
 
                                 finishCurrentTrip()
+                            },
+
+                            // =========================
+                            // MI CARRO (CATALOGO)
+                            // =========================
+
+                            vehicleState = vehicleViewModel.uiState
+                                .collectAsStateWithLifecycle()
+                                .value,
+
+                            onVehicleSelected = { vehicleId ->
+
+                                vehicleViewModel.selectVehicle(vehicleId)
+                            },
+
+                            onVehicleBatteryChange = { percent ->
+
+                                vehicleViewModel.changeBattery(percent)
+                            },
+
+                            onSaveVehicle = {
+
+                                vehicleViewModel.save()
+                            },
+
+                            onReloadVehicleCatalog = {
+
+                                vehicleViewModel.loadCatalog()
                             }
                         )
 
@@ -705,10 +748,15 @@ class MainActivity : ComponentActivity() {
             // CONSULTAS EN VIEWMODEL
             // =========================
 
+            val vehicle = vehicleViewModel.uiState.value
+
             smartChargingViewModel.calculate(
                 origin = origin,
                 destination = destination,
-                departurePercent = departureBattery
+                departurePercent = departureBattery,
+                usableBatteryKwh = vehicle.usableBatteryKwh,
+                consumptionKwhPer100Km =
+                    vehicle.consumptionKwhPer100Km
             )
 
             routeJob = lifecycleScope.launch {

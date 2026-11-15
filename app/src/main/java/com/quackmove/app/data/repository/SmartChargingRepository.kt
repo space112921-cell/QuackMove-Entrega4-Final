@@ -4,6 +4,7 @@ package com.quackmove.app.data.repository
 import com.quackmove.app.data.model.ChargingStation
 import com.quackmove.app.domain.BatteryEstimator
 import com.quackmove.app.domain.BatteryEstimate
+import com.quackmove.app.domain.DefaultVehicleSpecs
 import com.quackmove.app.feature.routes.RoutePolylineDecoder
 import org.maplibre.android.geometry.LatLng
 import kotlin.math.asin
@@ -49,8 +50,10 @@ class SmartChargingRepository(
 
     companion object {
 
-        const val BATTERY_KWH = 60.0
-        const val CONSUMPTION_KWH_PER_100_KM = 18.0
+        const val BATTERY_KWH =
+            DefaultVehicleSpecs.USABLE_BATTERY_KWH
+        const val CONSUMPTION_KWH_PER_100_KM =
+            DefaultVehicleSpecs.CONSUMPTION_KWH_PER_100_KM
         const val RESERVE_PERCENT = 10.0
         const val CHARGE_TO_PERCENT = 80.0
 
@@ -81,8 +84,14 @@ class SmartChargingRepository(
     suspend fun plan(
         origin: RoutePoint,
         destination: RoutePoint,
-        departurePercent: Float
+        departurePercent: Float,
+        usableBatteryKwh: Double = BATTERY_KWH,
+        consumptionKwhPer100Km: Double = CONSUMPTION_KWH_PER_100_KM
     ): SmartChargingPlan {
+
+        require(usableBatteryKwh > 0 && consumptionKwhPer100Km > 0) {
+            "Los datos del carro no son válidos."
+        }
 
         require(origin.isValid() && destination.isValid()) {
             "Selecciona un origen y un destino válidos."
@@ -117,9 +126,9 @@ class SmartChargingRepository(
 
             val directBattery = BatteryEstimator.calculate(
                 distanceKm = directRoute.distanceKm,
-                usableBatteryKwh = BATTERY_KWH,
+                usableBatteryKwh = usableBatteryKwh,
                 consumptionKwhPer100Km =
-                    CONSUMPTION_KWH_PER_100_KM,
+                    consumptionKwhPer100Km,
                 departurePercent = currentPercent,
                 minimumArrivalPercent = RESERVE_PERCENT
             )
@@ -133,7 +142,9 @@ class SmartChargingRepository(
                         ?: (
                                 currentPercent -
                                         percentUsed(
-                                            directRoute.distanceKm
+                                            directRoute.distanceKm,
+                                            usableBatteryKwh,
+                                            consumptionKwhPer100Km
                                         )
                                 )
 
@@ -141,10 +152,17 @@ class SmartChargingRepository(
                 val wholeRoute = mergeLegs(legs)
 
                 val totalPercentUsed =
-                    percentUsed(wholeRoute.distanceKm)
+                    percentUsed(
+                        wholeRoute.distanceKm,
+                        usableBatteryKwh,
+                        consumptionKwhPer100Km
+                    )
 
                 val totalEnergyKwh =
-                    energyKwh(wholeRoute.distanceKm)
+                    energyKwh(
+                        wholeRoute.distanceKm,
+                        consumptionKwhPer100Km
+                    )
 
                 // Llegada después de las recargas.
                 // Consumo total de todos los tramos.
@@ -185,7 +203,9 @@ class SmartChargingRepository(
                 origin = currentPoint,
                 directRoute = directRoute,
                 currentPercent = currentPercent,
-                usedStations = usedStations
+                usedStations = usedStations,
+                usableBatteryKwh = usableBatteryKwh,
+                consumptionKwhPer100Km = consumptionKwhPer100Km
             ) ?: throw IllegalStateException(
                 "La batería no alcanza hasta el destino " +
                         "y no encontramos una estación " +
@@ -234,7 +254,9 @@ class SmartChargingRepository(
         origin: RoutePoint,
         directRoute: RouteSummary,
         currentPercent: Double,
-        usedStations: Set<String>
+        usedStations: Set<String>,
+        usableBatteryKwh: Double,
+        consumptionKwhPer100Km: Double
     ): ReachableCandidate? {
 
         val points = RoutePolylineDecoder.decode(
@@ -250,7 +272,11 @@ class SmartChargingRepository(
 
         val usableKm =
             (currentPercent - RESERVE_PERCENT) /
-                    percentUsed(1.0)
+                    percentUsed(
+                        1.0,
+                        usableBatteryKwh,
+                        consumptionKwhPer100Km
+                    )
 
         if (usableKm <= 8.0) {
             return null
@@ -422,9 +448,9 @@ class SmartChargingRepository(
 
             val battery = BatteryEstimator.calculate(
                 distanceKm = routeToStation.distanceKm,
-                usableBatteryKwh = BATTERY_KWH,
+                usableBatteryKwh = usableBatteryKwh,
                 consumptionKwhPer100Km =
-                    CONSUMPTION_KWH_PER_100_KM,
+                    consumptionKwhPer100Km,
                 departurePercent = currentPercent,
                 minimumArrivalPercent = RESERVE_PERCENT
             )
@@ -443,7 +469,9 @@ class SmartChargingRepository(
                             ?: (
                                     currentPercent -
                                             percentUsed(
-                                                routeToStation.distanceKm
+                                                routeToStation.distanceKm,
+                                                usableBatteryKwh,
+                                                consumptionKwhPer100Km
                                             )
                                     ),
                     progressKm = projectedKm
@@ -534,20 +562,25 @@ class SmartChargingRepository(
     // FORMULAS DE ENERGIA
     // =====================================
 
+    // Usan el carro elegido en el catálogo.
+
     private fun energyKwh(
-        kilometers: Double
+        kilometers: Double,
+        consumptionKwhPer100Km: Double
     ): Double {
 
         return kilometers *
-                CONSUMPTION_KWH_PER_100_KM / 100.0
+                consumptionKwhPer100Km / 100.0
     }
 
     private fun percentUsed(
-        kilometers: Double
+        kilometers: Double,
+        usableBatteryKwh: Double,
+        consumptionKwhPer100Km: Double
     ): Double {
 
-        return energyKwh(kilometers) /
-                BATTERY_KWH * 100.0
+        return energyKwh(kilometers, consumptionKwhPer100Km) /
+                usableBatteryKwh * 100.0
     }
 
     // =====================================

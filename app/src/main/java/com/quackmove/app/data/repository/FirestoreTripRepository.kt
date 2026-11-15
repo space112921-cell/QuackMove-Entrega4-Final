@@ -23,7 +23,9 @@
                     ?: error("No se pudo iniciar sesión.")
             }
 
-            override suspend fun saveTrip(trip: SavedTrip): String {
+            override suspend fun saveTrip(trip: SavedTrip): String = withErrorReporting(
+                "FirestoreTripRepository.saveTrip"
+            ) {
                 val userId = getUserId()
 
                 val data = mapOf(
@@ -42,10 +44,12 @@
                     document.set(data).await()
                 }
 
-                return document.id
+                document.id
             }
 
-            override suspend fun getTrips(): List<SavedTrip> {
+            override suspend fun getTrips(): List<SavedTrip> = withErrorReporting(
+                "FirestoreTripRepository.getTrips"
+            ) {
                 val userId = getUserId()
 
                 val snapshot = withTimeout(12000) {
@@ -55,7 +59,7 @@
                         .await()
                 }
 
-                return snapshot.documents.mapNotNull { document ->
+                snapshot.documents.mapNotNull { document ->
                     val origin = document.getString("origin")
                         ?: return@mapNotNull null
 

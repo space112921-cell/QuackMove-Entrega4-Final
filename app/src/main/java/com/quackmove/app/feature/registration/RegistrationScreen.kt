@@ -29,9 +29,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 
-import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.firestore.FirebaseFirestore
-import com.quackmove.app.data.repository.FirebaseRegistrationRepository
+import com.quackmove.app.data.repository.QuackMoveDependencies
 
 // =====================================
 // COLORES DE QUACKMOVE
@@ -71,10 +69,8 @@ fun RegistrationScreen(
     val factory = remember {
 
         RegistrationViewModelFactory(
-            repository = FirebaseRegistrationRepository(
-                auth = FirebaseAuth.getInstance(),
-                firestore = FirebaseFirestore.getInstance()
-            )
+            repository =
+                QuackMoveDependencies.registrationRepository
         )
     }
 

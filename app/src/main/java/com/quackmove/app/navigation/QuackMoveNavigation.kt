@@ -3,6 +3,8 @@ package com.quackmove.app.navigation
 
 import android.net.Uri
 import androidx.compose.runtime.Composable
+import androidx.lifecycle.Lifecycle
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -39,33 +41,39 @@ fun QuackMoveNavigation(
     ) {
 
         // Pantalla del mapa.
-        composable(QuackMoveRoutes.MAP) {
+        composable(QuackMoveRoutes.MAP) { backStackEntry ->
             mapScreen(
                 {
-                    navController.navigate(
-                        QuackMoveRoutes.REGISTRATION
-                    )
+                    if (backStackEntry.isResumed()) {
+                        navController.navigate(
+                            QuackMoveRoutes.REGISTRATION
+                        )
+                    }
                 },
                 { latitude, longitude ->
-                    navController.navigate(
-                        "${QuackMoveRoutes.CHARGERS}/" +
-                                "$latitude/$longitude"
-                    )
+                    if (backStackEntry.isResumed()) {
+                        navController.navigate(
+                            "${QuackMoveRoutes.CHARGERS}/" +
+                                    "$latitude/$longitude"
+                        )
+                    }
                 },
                 { destination ->
-                    navController.navigate(
-                        "${QuackMoveRoutes.ROUTES}/" +
-                                Uri.encode(destination)
-                    )
+                    if (backStackEntry.isResumed()) {
+                        navController.navigate(
+                            "${QuackMoveRoutes.ROUTES}/" +
+                                    Uri.encode(destination)
+                        )
+                    }
                 }
             )
         }
 
         // Registro.
-        composable(QuackMoveRoutes.REGISTRATION) {
+        composable(QuackMoveRoutes.REGISTRATION) { backStackEntry ->
             RegistrationScreen(
                 onBack = {
-                    navController.popBackStack()
+                    navController.popIfResumed(backStackEntry)
                 }
             )
         }
@@ -95,7 +103,7 @@ fun QuackMoveNavigation(
                 latitude = latitude,
                 longitude = longitude,
                 onBack = {
-                    navController.popBackStack()
+                    navController.popIfResumed(backStackEntry)
                 }
             )
         }
@@ -117,9 +125,29 @@ fun QuackMoveNavigation(
             RoutesScreen(
                 destination = destination,
                 onBack = {
-                    navController.popBackStack()
+                    navController.popIfResumed(backStackEntry)
                 }
             )
         }
+    }
+}
+
+// =====================================
+// PROTECCION CONTRA DOBLE TOQUE
+// =====================================
+//
+// Durante la animacion de salida la pantalla deja de estar
+// RESUMED. Si el usuario toca dos veces "Volver al mapa",
+// el segundo toque se ignora y ya no se saca el mapa de la
+// pila (lo que dejaba la pantalla en blanco).
+
+private fun NavBackStackEntry.isResumed(): Boolean =
+    lifecycle.currentState == Lifecycle.State.RESUMED
+
+private fun NavHostController.popIfResumed(
+    entry: NavBackStackEntry
+) {
+    if (entry.isResumed()) {
+        popBackStack()
     }
 }

@@ -6,7 +6,6 @@ import com.google.firebase.auth.FirebaseAuth
 import com.quackmove.app.data.model.ChargingStation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
-import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -36,7 +35,10 @@ object GoogleChargingRepository : ChargingRepository {
     override suspend fun fetchStations(
         latitude: Double,
         longitude: Double
-    ): List<ChargingStation> = withContext(Dispatchers.IO) {
+    ): List<ChargingStation> = withErrorReporting(
+        "GoogleChargingRepository.fetchStations",
+        Dispatchers.IO
+    ) {
 
         require(
             latitude.isFinite() &&

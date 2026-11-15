@@ -5,7 +5,6 @@ import com.google.firebase.auth.FirebaseAuth
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
-import kotlinx.coroutines.withContext
 
 import org.json.JSONObject
 
@@ -52,12 +51,15 @@ object GooglePlacesRepository {
         userLatitude: Double? = null,
         userLongitude: Double? = null
     ): List<PlaceSearchResult> =
-        withContext(Dispatchers.IO) {
+        withErrorReporting(
+            "GooglePlacesRepository.searchPlaces",
+            Dispatchers.IO
+        ) {
 
             val searchText = query.trim()
 
             if (searchText.length < 2) {
-                return@withContext emptyList()
+                return@withErrorReporting emptyList()
             }
 
             // =====================================
@@ -217,7 +219,7 @@ object GooglePlacesRepository {
 
                 val places = json.optJSONArray(
                     "places"
-                ) ?: return@withContext emptyList()
+                ) ?: return@withErrorReporting emptyList()
 
                 // =====================================
                 // CONVERTIR RESULTADOS

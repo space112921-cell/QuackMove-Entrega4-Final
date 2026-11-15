@@ -5,10 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 
-import com.google.firebase.auth.FirebaseAuthException
-import com.google.firebase.auth.FirebaseAuthUserCollisionException
-import com.google.firebase.auth.FirebaseAuthWeakPasswordException
-
+import com.quackmove.app.data.repository.RegistrationException
 import com.quackmove.app.data.repository.RegistrationRepository
 import com.quackmove.app.domain.RegistrationValidator
 
@@ -404,41 +401,10 @@ class RegistrationViewModel(
 
         return when (exception) {
 
-            is FirebaseAuthUserCollisionException -> {
-                "Este correo ya está registrado. " +
-                        "Utiliza otra dirección o inicia sesión."
-            }
-
-            is FirebaseAuthWeakPasswordException -> {
-                "Firebase rechazó la contraseña. " +
-                        "Utiliza una contraseña más segura."
-            }
-
-            is FirebaseAuthException -> {
-
-                when (exception.errorCode) {
-
-                    "ERROR_EMAIL_ALREADY_IN_USE" -> {
-                        "Este correo ya está registrado."
-                    }
-
-                    "ERROR_INVALID_EMAIL" -> {
-                        "El correo electrónico no es válido."
-                    }
-
-                    "ERROR_NETWORK_REQUEST_FAILED" -> {
-                        "No hay conexión. Comprueba internet."
-                    }
-
-                    "ERROR_OPERATION_NOT_ALLOWED" -> {
-                        "Habilita Email/Password en Firebase Authentication."
-                    }
-
-                    else -> {
-                        "No se pudo crear la cuenta. " +
-                                "Comprueba Firebase Authentication."
-                    }
-                }
+            // El Repository ya tradujo el error de Firebase.
+            is RegistrationException -> {
+                exception.message
+                    ?: "No se pudo crear la cuenta."
             }
 
             is IllegalArgumentException -> {

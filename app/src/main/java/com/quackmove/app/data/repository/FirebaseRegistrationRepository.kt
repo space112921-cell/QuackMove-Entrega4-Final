@@ -1,13 +1,19 @@
 
 package com.quackmove.app.data.repository
 
+import com.google.firebase.FirebaseException
+import com.google.firebase.FirebaseNetworkException
 import com.google.firebase.auth.EmailAuthProvider
+import com.google.firebase.auth.FirebaseAuthException
+import com.google.firebase.auth.FirebaseAuthUserCollisionException
+import com.google.firebase.auth.FirebaseAuthWeakPasswordException
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.SetOptions
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withTimeout
 
@@ -21,6 +27,18 @@ data class RegistrationResult(
     val profileSaved: Boolean,
     val profileError: String? = null
 )
+
+// =====================================
+// ERROR DE REGISTRO
+// =====================================
+//
+// Error ya traducido para el usuario. Así el ViewModel
+// no necesita importar clases de Firebase (M6).
+
+class RegistrationException(
+    message: String,
+    cause: Throwable? = null
+) : Exception(message, cause)
 
 // =====================================
 // CONTRATO DEL REPOSITORIO
@@ -120,9 +138,28 @@ class FirebaseRegistrationRepository(
                 }.user
             }
 
+        } catch (timeout: TimeoutCancellationException) {
+
+            throw registrationError(
+                "register",
+                timeout,
+                "Firebase tardó demasiado en responder. " +
+                        "Comprueba la conexión e inténtalo de nuevo."
+            )
+
         } catch (exception: CancellationException) {
 
             throw exception
+
+        } catch (exception: FirebaseException) {
+
+            // El ViewModel no conoce las clases de Firebase (M6):
+            // aquí se traducen a un mensaje para el usuario.
+            throw registrationError(
+                "register",
+                exception,
+                friendlyAuthMessage(exception)
+            )
         }
 
         val registeredUser = user
@@ -155,11 +192,24 @@ class FirebaseRegistrationRepository(
                 profileSaved = true
             )
 
+        } catch (timeout: TimeoutCancellationException) {
+
+            RepositoryErrorReporter.record("saveProfile", timeout)
+
+            RegistrationResult(
+                uid = registeredUser.uid,
+                email = registeredEmail,
+                profileSaved = false,
+                profileError = "Firestore tardó demasiado en responder."
+            )
+
         } catch (exception: CancellationException) {
 
             throw exception
 
         } catch (exception: Exception) {
+
+            RepositoryErrorReporter.record("saveProfile", exception)
 
             RegistrationResult(
                 uid = registeredUser.uid,
@@ -217,11 +267,24 @@ class FirebaseRegistrationRepository(
                 profileSaved = true
             )
 
+        } catch (timeout: TimeoutCancellationException) {
+
+            RepositoryErrorReporter.record("saveProfile", timeout)
+
+            RegistrationResult(
+                uid = user.uid,
+                email = email,
+                profileSaved = false,
+                profileError = "Firestore tardó demasiado en responder."
+            )
+
         } catch (exception: CancellationException) {
 
             throw exception
 
         } catch (exception: Exception) {
+
+            RepositoryErrorReporter.record("saveProfile", exception)
 
             RegistrationResult(
                 uid = user.uid,
@@ -262,6 +325,62 @@ class FirebaseRegistrationRepository(
                     SetOptions.merge()
                 )
                 .await()
+        }
+    }
+
+    // =====================================
+    // TRADUCCION DE ERRORES DE FIREBASE
+    // =====================================
+
+    private fun registrationError(
+        operation: String,
+        cause: Exception,
+        message: String
+    ): RegistrationException {
+
+        RepositoryErrorReporter.record(operation, cause)
+
+        return RegistrationException(message, cause)
+    }
+
+    private fun friendlyAuthMessage(
+        exception: FirebaseException
+    ): String {
+
+        return when (exception) {
+
+            is FirebaseAuthUserCollisionException ->
+                "Este correo ya está registrado. " +
+                        "Utiliza otra dirección."
+
+            is FirebaseAuthWeakPasswordException ->
+                "Firebase rechazó la contraseña. " +
+                        "Utiliza una contraseña más segura."
+
+            is FirebaseNetworkException ->
+                "No hay conexión. Comprueba internet."
+
+            is FirebaseAuthException -> when (exception.errorCode) {
+
+                "ERROR_EMAIL_ALREADY_IN_USE" ->
+                    "Este correo ya está registrado."
+
+                "ERROR_INVALID_EMAIL" ->
+                    "El correo electrónico no es válido."
+
+                "ERROR_NETWORK_REQUEST_FAILED" ->
+                    "No hay conexión. Comprueba internet."
+
+                "ERROR_OPERATION_NOT_ALLOWED" ->
+                    "El registro con correo no está habilitado."
+
+                else ->
+                    "No se pudo crear la cuenta. Inténtalo de nuevo."
+            }
+
+            else ->
+                "Error al conectar con Firebase. " +
+                        "Comprueba internet e inténtalo nuevamente."
         }
     }
 }

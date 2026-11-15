@@ -14,8 +14,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.quackmove.app.data.local.QuackMoveDatabase
-import com.quackmove.app.data.repository.RoomTripRepository
+import com.quackmove.app.data.repository.QuackMoveDependencies
 import com.quackmove.app.data.repository.RouteSummary
 import com.quackmove.app.domain.SavedTrip
 
@@ -27,11 +26,7 @@ fun TripsLocalSection(
     val context = LocalContext.current.applicationContext
 
     val repository = remember(context) {
-        RoomTripRepository(
-            QuackMoveDatabase
-                .getDatabase(context)
-                .localTripDao()
-        )
+        QuackMoveDependencies.localTripRepository(context)
     }
 
     val factory = remember(repository) {

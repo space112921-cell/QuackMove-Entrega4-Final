@@ -34,6 +34,10 @@ import androidx.compose.ui.viewinterop.AndroidView
 
 import com.quackmove.app.data.repository.PlaceSearchResult
 import com.quackmove.app.data.repository.RoutePoint
+import com.quackmove.app.feature.vehicle.MyCarCard
+import com.quackmove.app.feature.vehicle.VehicleCatalogSheet
+import com.quackmove.app.feature.vehicle.VehicleSpecsSheet
+import com.quackmove.app.feature.vehicle.VehicleUiState
 
 import kotlinx.coroutines.launch
 
@@ -139,7 +143,17 @@ fun MapScreen(
         RoutePoint,
         Float,
         String
-    ) -> Unit
+    ) -> Unit,
+
+    // =====================================
+    // MI CARRO (CATALOGO)
+    // =====================================
+
+    vehicleState: VehicleUiState,
+    onVehicleSelected: (String) -> Unit,
+    onVehicleBatteryChange: (Float) -> Unit,
+    onSaveVehicle: () -> Unit,
+    onReloadVehicleCatalog: () -> Unit
 ) {
 
     val scope = rememberCoroutineScope()
@@ -230,15 +244,15 @@ fun MapScreen(
     // VEHICULO
     // =====================================
 
-    var vehicleName by rememberSaveable {
-        mutableStateOf("")
+    // El carro y la batería viven en VehicleViewModel
+    // (guardados en Room), no en el Composable.
+    val batteryPercent = vehicleState.batteryPercent
+
+    var showVehicleCatalog by rememberSaveable {
+        mutableStateOf(false)
     }
 
-    var batteryPercent by rememberSaveable {
-        mutableFloatStateOf(80f)
-    }
-
-    var showVehicleEditor by remember {
+    var showVehicleSpecs by rememberSaveable {
         mutableStateOf(false)
     }
 
@@ -544,25 +558,39 @@ fun MapScreen(
     // EDITAR MI CARRO
     // =====================================
 
-    if (showVehicleEditor) {
+    if (showVehicleCatalog) {
 
-        QMVehicleEditorSheet(
-            initialName = vehicleName,
-            initialBattery = batteryPercent,
+        VehicleCatalogSheet(
+            state = vehicleState,
 
-            onDismiss = {
+            onVehicleSelected = { vehicleId ->
 
-                showVehicleEditor = false
-            },
-
-            onSave = { newName, newBattery ->
-
-                vehicleName = newName
-                batteryPercent = newBattery
+                onVehicleSelected(vehicleId)
 
                 resetCalculation()
 
-                showVehicleEditor = false
+                showVehicleCatalog = false
+            },
+
+            onRetry = onReloadVehicleCatalog,
+
+            onDismiss = {
+
+                showVehicleCatalog = false
+            }
+        )
+    }
+
+    val specsVehicle = vehicleState.selectedVehicle
+
+    if (showVehicleSpecs && specsVehicle != null) {
+
+        VehicleSpecsSheet(
+            vehicle = specsVehicle,
+
+            onDismiss = {
+
+                showVehicleSpecs = false
             }
         )
     }
@@ -639,7 +667,7 @@ fun MapScreen(
 
                         onClick = {
 
-                            showVehicleEditor = true
+                            showVehicleCatalog = true
 
                             scope.launch {
                                 drawerState.close()
@@ -844,23 +872,27 @@ fun MapScreen(
                                     }
                                 }
 
-                                QMMyCarSection(
-                                    vehicleName = vehicleName,
-                                    batteryPercent = batteryPercent,
+                                MyCarCard(
+                                    state = vehicleState,
+
+                                    onOpenCatalog = {
+
+                                        showVehicleCatalog = true
+                                    },
+
+                                    onOpenSpecs = {
+
+                                        showVehicleSpecs = true
+                                    },
 
                                     onBatteryChange = { value ->
 
-                                        batteryPercent =
-                                            value.roundToInt()
-                                                .toFloat()
+                                        onVehicleBatteryChange(value)
 
                                         resetCalculation()
                                     },
 
-                                    onOpenEditor = {
-
-                                        showVehicleEditor = true
-                                    }
+                                    onSave = onSaveVehicle
                                 )
 
                                 Row(
@@ -1285,10 +1317,9 @@ fun MapScreen(
                                         QMTripBatteryMessage(plan)
 
                                         Text(
-                                            "Estimación provisional: " +
-                                                    "60 kWh de batería útil, " +
-                                                    "18 kWh/100 km y " +
-                                                    "10% de reserva mínima.",
+                                            qmVehicleEstimateText(
+                                                vehicleState
+                                            ),
 
                                             color = QMGray,
                                             fontSize = 11.sp
@@ -1559,10 +1590,9 @@ fun MapScreen(
                                     QMTripBatteryMessage(plan)
 
                                     Text(
-                                        "Estimación provisional: " +
-                                                "60 kWh de batería útil, " +
-                                                "18 kWh/100 km y " +
-                                                "10% de reserva mínima.",
+                                        qmVehicleEstimateText(
+                                            vehicleState
+                                        ),
 
                                         color = QMGray,
                                         fontSize = 11.sp
@@ -1906,259 +1936,6 @@ private fun QMTripBatteryMessage(
             color = QMGray,
             fontSize = 12.sp
         )
-    }
-}
-
-// =====================================
-// MI CARRO
-// =====================================
-
-@Composable
-private fun QMMyCarSection(
-    vehicleName: String,
-    batteryPercent: Float,
-    onBatteryChange: (Float) -> Unit,
-    onOpenEditor: () -> Unit
-) {
-
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-
-        verticalArrangement =
-            Arrangement.spacedBy(10.dp)
-    ) {
-
-        Text(
-            "Mi carro",
-            color = QMWhite,
-            fontSize = 19.sp,
-            fontWeight = FontWeight.Bold
-        )
-
-        Surface(
-            color = QMCard,
-            shape = RoundedCornerShape(20.dp),
-
-            border = BorderStroke(
-                1.dp,
-                QMLine
-            )
-        ) {
-
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-
-                verticalArrangement =
-                    Arrangement.spacedBy(10.dp)
-            ) {
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-
-                            onOpenEditor()
-                        },
-
-                    verticalAlignment =
-                        Alignment.CenterVertically,
-
-                    horizontalArrangement =
-                        Arrangement.SpaceBetween
-                ) {
-
-                    Column(
-                        modifier = Modifier.weight(1f)
-                    ) {
-
-                        Text(
-                            vehicleName.ifBlank {
-                                "Configurar mi carro"
-                            },
-
-                            color = QMWhite,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 18.sp,
-
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-
-                        Text(
-                            "Toca para editar el vehículo",
-                            color = QMGray,
-                            fontSize = 11.sp
-                        )
-                    }
-
-                    Icon(
-                        Icons.Default.KeyboardArrowDown,
-                        contentDescription = "Editar vehículo",
-                        tint = QMAccentSoft
-                    )
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-
-                    horizontalArrangement =
-                        Arrangement.SpaceBetween,
-
-                    verticalAlignment =
-                        Alignment.CenterVertically
-                ) {
-
-                    Text(
-                        "Batería",
-                        color = QMGray
-                    )
-
-                    Text(
-                        "${batteryPercent.roundToInt()}%",
-                        color = QMAccentSoft,
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                Slider(
-                    value = batteryPercent,
-                    onValueChange = onBatteryChange,
-                    valueRange = 0f..100f,
-                    steps = 99,
-
-                    colors = SliderDefaults.colors(
-                        thumbColor = QMWhite,
-                        activeTrackColor = QMAccent,
-                        inactiveTrackColor = QMLine,
-                        activeTickColor = Color.Transparent,
-                        inactiveTickColor = Color.Transparent
-                    )
-                )
-            }
-        }
-    }
-}
-
-// =====================================
-// EDITAR MI CARRO
-// =====================================
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun QMVehicleEditorSheet(
-    initialName: String,
-    initialBattery: Float,
-    onDismiss: () -> Unit,
-    onSave: (String, Float) -> Unit
-) {
-
-    var editedName by remember(initialName) {
-        mutableStateOf(initialName)
-    }
-
-    var editedBattery by remember(initialBattery) {
-        mutableFloatStateOf(initialBattery)
-    }
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        containerColor = QMPanel,
-        contentColor = QMWhite
-    ) {
-
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(20.dp),
-
-            verticalArrangement =
-                Arrangement.spacedBy(14.dp)
-        ) {
-
-            Text(
-                "Mi carro",
-                color = QMWhite,
-                fontSize = 22.sp,
-                fontWeight = FontWeight.Bold
-            )
-
-            OutlinedTextField(
-                value = editedName,
-
-                onValueChange = {
-
-                    editedName = it
-                },
-
-                label = {
-                    Text("Nombre del vehículo")
-                },
-
-                placeholder = {
-                    Text("Ej. Audi e-tron")
-                },
-
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = QMAccent,
-                    unfocusedBorderColor = QMLine,
-                    focusedTextColor = QMWhite,
-                    unfocusedTextColor = QMWhite
-                )
-            )
-
-            Text(
-                "Batería: ${editedBattery.roundToInt()}%",
-                color = QMAccentSoft,
-                fontWeight = FontWeight.Bold
-            )
-
-            Slider(
-                value = editedBattery,
-
-                onValueChange = {
-
-                    editedBattery =
-                        it.roundToInt().toFloat()
-                },
-
-                valueRange = 0f..100f,
-                steps = 99,
-
-                colors = SliderDefaults.colors(
-                    thumbColor = QMWhite,
-                    activeTrackColor = QMAccent,
-                    inactiveTrackColor = QMLine
-                )
-            )
-
-            Button(
-                onClick = {
-
-                    onSave(
-                        editedName.trim(),
-                        editedBattery
-                    )
-                },
-
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp),
-
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = QMAccent
-                )
-            ) {
-
-                Text("Guardar cambios")
-            }
-        }
     }
 }
 
@@ -2649,4 +2426,22 @@ private fun QMMapCircle(
             )
         }
     }
+}
+
+// =====================================
+// TEXTO DE LA ESTIMACION
+// =====================================
+
+private fun qmVehicleEstimateText(
+    state: VehicleUiState
+): String {
+
+    val battery = qmNumber(state.usableBatteryKwh)
+    val consumption = qmNumber(state.consumptionKwhPer100Km)
+
+    val source = state.selectedVehicle?.displayName
+        ?: "Estimación provisional"
+
+    return "$source: $battery kWh de batería útil, " +
+            "$consumption kWh/100 km y 10% de reserva mínima."
 }
