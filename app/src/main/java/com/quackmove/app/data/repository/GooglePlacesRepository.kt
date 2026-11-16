@@ -34,10 +34,23 @@ data class PlaceSearchResult(
 }
 
 // =====================================
+// CONTRATO DE BUSQUEDA DE LUGARES
+// =====================================
+
+interface PlacesRepository {
+
+    suspend fun searchPlaces(
+        query: String,
+        userLatitude: Double?,
+        userLongitude: Double?
+    ): List<PlaceSearchResult>
+}
+
+// =====================================
 // REPOSITORIO DE GOOGLE PLACES
 // =====================================
 
-object GooglePlacesRepository {
+object GooglePlacesRepository : PlacesRepository {
 
     private const val PLACES_URL =
         "https://quackmove-api.space-112921.workers.dev/places"
@@ -46,10 +59,10 @@ object GooglePlacesRepository {
     // BUSCAR DESTINOS
     // =====================================
 
-    suspend fun searchPlaces(
+    override suspend fun searchPlaces(
         query: String,
-        userLatitude: Double? = null,
-        userLongitude: Double? = null
+        userLatitude: Double?,
+        userLongitude: Double?
     ): List<PlaceSearchResult> =
         withErrorReporting(
             "GooglePlacesRepository.searchPlaces",

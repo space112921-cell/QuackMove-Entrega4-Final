@@ -34,7 +34,8 @@
                     "destination" to trip.destination,
                     "distanceKm" to trip.distanceKm,
                     "drivingMinutes" to trip.drivingMinutes,
-                    "departureBatteryPercent" to trip.departureBatteryPercent
+                    "departureBatteryPercent" to trip.departureBatteryPercent,
+                    "savedAtMillis" to System.currentTimeMillis()
                 )
 
                 val document = firestore.collection("trips").document()
@@ -59,7 +60,11 @@
                         .await()
                 }
 
-                snapshot.documents.mapNotNull { document ->
+                // Más recientes primero. Se ordena en el teléfono
+                // para no necesitar un índice compuesto en Firestore.
+                snapshot.documents
+                    .sortedByDescending { it.getLong("savedAtMillis") ?: 0L }
+                    .mapNotNull { document ->
                     val origin = document.getString("origin")
                         ?: return@mapNotNull null
 

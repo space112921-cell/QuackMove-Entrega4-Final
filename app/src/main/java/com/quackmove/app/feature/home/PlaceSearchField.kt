@@ -16,16 +16,20 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+
 import com.quackmove.app.data.repository.GooglePlacesRepository
 import com.quackmove.app.data.repository.PlaceSearchResult
-
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.delay
 
 private val FieldPanel = Color(0xFF1D2C46)
 private val FieldText = Color(0xFFF5F6FF)
 private val FieldSecondary = Color(0xFFB6C2DF)
 private val FieldGreen = Color(0xFF43E6B3)
+
+// =====================================
+// CAMPO CON SU VIEWMODEL
+// =====================================
 
 @Composable
 fun PlaceSearchField(
@@ -38,79 +42,46 @@ fun PlaceSearchField(
     userLongitude: Double? = null
 ) {
 
-    var results by remember {
-        mutableStateOf<List<PlaceSearchResult>>(emptyList())
+    val model: PlaceSearchViewModel = viewModel(
+        key = "place-search-$label",
+        factory = PlaceSearchViewModelFactory(GooglePlacesRepository)
+    )
+
+    val state by model.uiState.collectAsStateWithLifecycle()
+
+    // Avisar al ViewModel cada vez que cambia el texto.
+    // El ViewModel espera 500 ms antes de buscar.
+    LaunchedEffect(value, userLatitude, userLongitude) {
+        model.onQueryChanged(value, userLatitude, userLongitude)
     }
 
-    var isLoading by remember {
-        mutableStateOf(false)
-    }
+    PlaceSearchFieldContent(
+        label = label,
+        value = value,
+        state = state,
+        onValueChange = onValueChange,
+        onPlaceSelected = { place ->
+            model.onPlaceSelected(place)
+            onValueChange(place.name)
+            onPlaceSelected(place)
+        },
+        modifier = modifier
+    )
+}
 
-    var errorMessage by remember {
-        mutableStateOf<String?>(null)
-    }
+// =====================================
+// CONTENIDO: RECIBE ESTADO Y CALLBACKS
+// =====================================
 
-    var selectedPlace by remember {
-        mutableStateOf<PlaceSearchResult?>(null)
-    }
-
-    var isFocusedSearch by remember {
-        mutableStateOf(false)
-    }
-
-    // Buscar con retraso para evitar consultas
-    // por cada tecla presionada.
-    LaunchedEffect(
-        value,
-        selectedPlace,
-        userLatitude,
-        userLongitude
-    ) {
-
-        results = emptyList()
-        errorMessage = null
-
-        val query = value.trim()
-
-        if (
-            query.length < 3 ||
-            selectedPlace?.name == value
-        ) {
-            isLoading = false
-            return@LaunchedEffect
-        }
-
-        isLoading = false
-
-        delay(500)
-
-        isLoading = true
-
-        try {
-
-            results = GooglePlacesRepository.searchPlaces(
-                query = query,
-                userLatitude = userLatitude,
-                userLongitude = userLongitude
-            )
-
-        } catch (exception: CancellationException) {
-
-            throw exception
-
-        } catch (exception: Exception) {
-
-            results = emptyList()
-
-            errorMessage =
-                exception.message
-                    ?: "No se encontraron lugares"
-
-        } finally {
-
-            isLoading = false
-        }
-    }
+@Composable
+fun PlaceSearchFieldContent(
+    label: String,
+    value: String,
+    state: PlaceSearchUiState,
+    onValueChange: (String) -> Unit,
+    onPlaceSelected: (PlaceSearchResult) -> Unit,
+    modifier: Modifier = Modifier
+) {
 
     Column(
         modifier = modifier,
@@ -120,12 +91,7 @@ fun PlaceSearchField(
         OutlinedTextField(
             value = value,
 
-            onValueChange = { newValue ->
-
-                selectedPlace = null
-                isFocusedSearch = true
-                onValueChange(newValue)
-            },
+            onValueChange = onValueChange,
 
             modifier = Modifier.fillMaxWidth(),
 
@@ -148,7 +114,7 @@ fun PlaceSearchField(
 
             trailingIcon = {
 
-                if (isLoading) {
+                if (state.isLoading) {
 
                     CircularProgressIndicator(
                         modifier = Modifier.size(20.dp),
@@ -156,7 +122,7 @@ fun PlaceSearchField(
                         color = FieldGreen
                     )
 
-                } else if (selectedPlace != null) {
+                } else if (state.selectedPlace != null) {
 
                     Icon(
                         Icons.Default.LocationOn,
@@ -179,8 +145,8 @@ fun PlaceSearchField(
         )
 
         if (
-            results.isNotEmpty() &&
-            selectedPlace == null
+            state.results.isNotEmpty() &&
+            state.selectedPlace == null
         ) {
 
             Surface(
@@ -196,7 +162,7 @@ fun PlaceSearchField(
                 ) {
 
                     items(
-                        items = results,
+                        items = state.results,
                         key = { place ->
                             place.id.ifBlank {
                                 "${place.latitude},${place.longitude}"
@@ -208,13 +174,6 @@ fun PlaceSearchField(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
-
-                                    selectedPlace = place
-
-                                    results = emptyList()
-                                    isFocusedSearch = false
-
-                                    onValueChange(place.name)
 
                                     onPlaceSelected(place)
                                 }
@@ -255,7 +214,7 @@ fun PlaceSearchField(
             }
         }
 
-        errorMessage?.let { message ->
+        state.errorMessage?.let { message ->
 
             Text(
                 text = message,

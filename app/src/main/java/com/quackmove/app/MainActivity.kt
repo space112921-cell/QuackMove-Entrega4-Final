@@ -572,6 +572,19 @@ class MainActivity : ComponentActivity() {
                             onReloadVehicleCatalog = {
 
                                 vehicleViewModel.loadCatalog()
+                            },
+
+                            // =========================
+                            // MIS VIAJES (FIRESTORE)
+                            // =========================
+
+                            savedTripsState = tripViewModel.savedTrips
+                                .collectAsStateWithLifecycle()
+                                .value,
+
+                            onRetrySavedTrips = {
+
+                                tripViewModel.loadSavedTrips()
                             }
                         )
 

@@ -153,7 +153,14 @@ fun MapScreen(
     onVehicleSelected: (String) -> Unit,
     onVehicleBatteryChange: (Float) -> Unit,
     onSaveVehicle: () -> Unit,
-    onReloadVehicleCatalog: () -> Unit
+    onReloadVehicleCatalog: () -> Unit,
+
+    // =====================================
+    // MIS VIAJES (FIRESTORE)
+    // =====================================
+
+    savedTripsState: SavedTripsUiState,
+    onRetrySavedTrips: () -> Unit
 ) {
 
     val scope = rememberCoroutineScope()
@@ -913,7 +920,8 @@ fun MapScreen(
                                     )
 
                                     Text(
-                                        "${recentDestinations.size} destinos",
+                                        if (recentDestinations.size == 1) "1 destino"
+                                        else "${recentDestinations.size} destinos",
                                         color = QMGray,
                                         fontSize = 12.sp
                                     )
@@ -954,6 +962,11 @@ fun MapScreen(
                                             )
                                         }
                                 }
+
+                                SavedTripsSection(
+                                    state = savedTripsState,
+                                    onRetry = onRetrySavedTrips
+                                )
                             }
 
                             // =========================

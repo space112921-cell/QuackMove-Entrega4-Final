@@ -32,6 +32,16 @@ data class TripSaveUiState(
 )
 
 // =====================================
+// ESTADO DE VIAJES LEIDOS DE FIRESTORE
+// =====================================
+
+data class SavedTripsUiState(
+    val isLoading: Boolean = false,
+    val trips: List<SavedTrip> = emptyList(),
+    val errorMessage: String? = null
+)
+
+// =====================================
 // TRIP VIEWMODEL
 // =====================================
 
@@ -45,6 +55,62 @@ class TripViewModel(
 
     val uiState: StateFlow<TripSaveUiState> =
         _uiState.asStateFlow()
+
+    private val _savedTrips = MutableStateFlow(
+        SavedTripsUiState()
+    )
+
+    // Viajes del usuario leídos de la colección "trips" (M9).
+    val savedTrips: StateFlow<SavedTripsUiState> =
+        _savedTrips.asStateFlow()
+
+    init {
+        loadSavedTrips()
+    }
+
+    // =====================================
+    // LEER VIAJES DE FIRESTORE
+    // =====================================
+
+    fun loadSavedTrips() {
+
+        if (_savedTrips.value.isLoading) return
+
+        _savedTrips.update {
+            it.copy(isLoading = true, errorMessage = null)
+        }
+
+        viewModelScope.launch {
+
+            try {
+
+                val trips = repository.getRemoteTrips()
+
+                _savedTrips.value = SavedTripsUiState(
+                    trips = trips
+                )
+
+            } catch (
+                exception: CancellationException
+            ) {
+
+                throw exception
+
+            } catch (exception: Exception) {
+
+                // Se conservan los viajes que ya se
+                // mostraban; solo se avisa del error.
+                _savedTrips.update {
+                    it.copy(
+                        isLoading = false,
+                        errorMessage =
+                            "No se pudieron cargar tus viajes. " +
+                                    "Comprueba la conexión."
+                    )
+                }
+            }
+        }
+    }
 
     // =====================================
     // GUARDAR VIAJE
@@ -118,6 +184,9 @@ class TripViewModel(
                 val id = repository.saveRemote(trip)
 
                 firebaseSaved = true
+
+                // Mostrar el viaje recién guardado.
+                loadSavedTrips()
 
                 Log.d(
                     "QuackMoveFirebase",
