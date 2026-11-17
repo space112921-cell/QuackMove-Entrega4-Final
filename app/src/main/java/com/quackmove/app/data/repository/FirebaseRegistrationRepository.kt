@@ -44,7 +44,21 @@ class RegistrationException(
 // CONTRATO DEL REPOSITORIO
 // =====================================
 
+// Cuenta permanente con la que el usuario tiene sesión.
+data class RegisteredAccount(
+    val uid: String,
+    val email: String,
+    val username: String
+)
+
 interface RegistrationRepository {
+
+    // Cuenta registrada actual (null si no hay sesión
+    // o si la sesión es anónima).
+    suspend fun currentAccount(): RegisteredAccount?
+
+    // Cierra la sesión de la cuenta registrada.
+    suspend fun signOut()
 
     suspend fun register(
         username: String,
@@ -382,5 +396,62 @@ class FirebaseRegistrationRepository(
                 "Error al conectar con Firebase. " +
                         "Comprueba internet e inténtalo nuevamente."
         }
+    }
+
+    // =====================================
+    // CUENTA ACTUAL
+    // =====================================
+
+    override suspend fun currentAccount(): RegisteredAccount? {
+
+        val user = auth.currentUser ?: return null
+
+        if (user.isAnonymous) return null
+
+        val email = user.email ?: return null
+
+        // El nombre de usuario vive en Firestore (users/{uid}).
+        // Si no se puede leer, se usa la parte antes de la @.
+        val username = try {
+
+            withTimeout(8000L) {
+                firestore
+                    .collection("users")
+                    .document(user.uid)
+                    .get()
+                    .await()
+                    .getString("username")
+            }
+
+        } catch (timeout: TimeoutCancellationException) {
+
+            RepositoryErrorReporter.record("currentAccount", timeout)
+            null
+
+        } catch (exception: CancellationException) {
+
+            throw exception
+
+        } catch (exception: Exception) {
+
+            RepositoryErrorReporter.record("currentAccount", exception)
+            null
+        }
+
+        return RegisteredAccount(
+            uid = user.uid,
+            email = email,
+            username = username?.takeIf { it.isNotBlank() }
+                ?: email.substringBefore("@")
+        )
+    }
+
+    // =====================================
+    // CERRAR SESION
+    // =====================================
+
+    override suspend fun signOut() {
+
+        auth.signOut()
     }
 }

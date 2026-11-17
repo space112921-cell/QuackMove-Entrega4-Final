@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 
+import com.quackmove.app.data.repository.RegisteredAccount
 import com.quackmove.app.data.repository.RegistrationException
 import com.quackmove.app.data.repository.RegistrationRepository
 import com.quackmove.app.domain.RegistrationValidator
@@ -44,7 +45,16 @@ data class RegistrationUiState(
 
     val errorMessage: String? = null,
 
-    val successMessage: String? = null
+    val successMessage: String? = null,
+
+    // Mientras se revisa si ya hay una cuenta con sesión.
+    val isCheckingSession: Boolean = true,
+
+    // Cuenta con sesión: si existe, se muestra el perfil
+    // en lugar del formulario de registro.
+    val account: RegisteredAccount? = null,
+
+    val isSigningOut: Boolean = false
 
 ) {
 
@@ -96,6 +106,77 @@ class RegistrationViewModel(
 
     val uiState: StateFlow<RegistrationUiState> =
         _uiState.asStateFlow()
+
+    init {
+        loadAccount()
+    }
+
+    // =====================================
+    // REVISAR SI YA HAY CUENTA
+    // =====================================
+
+    private fun loadAccount() {
+
+        viewModelScope.launch {
+
+            val account = try {
+
+                repository.currentAccount()
+
+            } catch (exception: CancellationException) {
+
+                throw exception
+
+            } catch (exception: Exception) {
+
+                null
+            }
+
+            _uiState.update {
+                it.copy(
+                    isCheckingSession = false,
+                    account = account
+                )
+            }
+        }
+    }
+
+    // =====================================
+    // CERRAR SESION
+    // =====================================
+
+    fun signOut() {
+
+        if (_uiState.value.isSigningOut) return
+
+        _uiState.update { it.copy(isSigningOut = true) }
+
+        viewModelScope.launch {
+
+            try {
+
+                repository.signOut()
+
+                // Volver al formulario vacío.
+                _uiState.value = RegistrationUiState(
+                    isCheckingSession = false
+                )
+
+            } catch (exception: CancellationException) {
+
+                throw exception
+
+            } catch (exception: Exception) {
+
+                _uiState.update {
+                    it.copy(
+                        isSigningOut = false,
+                        errorMessage = "No se pudo cerrar la sesión."
+                    )
+                }
+            }
+        }
+    }
 
     // =====================================
     // ACTUALIZAR NOMBRE
@@ -268,6 +349,13 @@ class RegistrationViewModel(
                             result.profileSaved,
 
                         firebaseUid = result.uid,
+
+                        // Con la cuenta creada se muestra el perfil.
+                        account = RegisteredAccount(
+                            uid = result.uid,
+                            email = result.email,
+                            username = state.username.trim()
+                        ),
 
                         // Borrar las credenciales del
                         // estado después del registro.

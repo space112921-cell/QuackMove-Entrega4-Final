@@ -85,6 +85,32 @@ fun RegistrationScreen(
     val state by model.uiState
         .collectAsStateWithLifecycle()
 
+    // =================================
+    // YA HAY CUENTA: MOSTRAR PERFIL
+    // =================================
+
+    if (state.isCheckingSession) {
+        RegistrationCheckingContent()
+        return
+    }
+
+    state.account?.let { account ->
+
+        RegistrationProfileContent(
+            account = account,
+            successMessage = state.successMessage,
+            errorMessage = state.errorMessage,
+            showRetryProfile =
+                state.accountCreated && !state.registrationComplete,
+            isBusy = state.isLoading || state.isSigningOut,
+            onRetryProfile = model::retrySaveProfile,
+            onSignOut = model::signOut,
+            onBack = onBack
+        )
+
+        return
+    }
+
     val fieldsEnabled =
         !state.isLoading &&
                 !state.accountCreated

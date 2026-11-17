@@ -734,7 +734,7 @@ fun MapScreen(
 
                     NavigationDrawerItem(
                         label = {
-                            Text("Crear cuenta")
+                            Text("Mi cuenta")
                         },
 
                         selected = false,
