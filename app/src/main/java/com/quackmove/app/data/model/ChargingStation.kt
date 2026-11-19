@@ -1,4 +1,3 @@
-
 package com.quackmove.app.data.model
 
 data class ChargingStation(
@@ -7,5 +6,9 @@ data class ChargingStation(
     val distance: String = "",
     val connector: String? = null,
     val powerKw: Int? = null,
-    val available: Boolean? = null
+    val available: Boolean? = null,
+
+    // Coordenadas geográficas de la estación
+    val latitude: Double? = null,
+    val longitude: Double? = null
 )

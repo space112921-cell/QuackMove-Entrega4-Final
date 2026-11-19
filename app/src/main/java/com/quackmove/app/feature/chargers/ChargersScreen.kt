@@ -26,6 +26,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.quackmove.app.data.model.ChargingStation
 import com.quackmove.app.data.repository.GoogleChargingRepository
 import com.quackmove.app.feature.routes.rememberInternetAvailable
+import androidx.compose.runtime.LaunchedEffect
 
 // =====================================
 // COLORES DE QUACKMOVE
@@ -47,6 +48,8 @@ private val OfflineBackground = Color(0xFF3D3028)
 
 @Composable
 fun ChargersScreen(
+    latitude: Double?,
+    longitude: Double?,
     onBack: () -> Unit = {}
 ) {
 
@@ -61,6 +64,15 @@ fun ChargersScreen(
     val model: ChargersViewModel = viewModel(
         factory = factory
     )
+
+    LaunchedEffect(latitude, longitude) {
+        if (latitude != null && longitude != null) {
+            model.setSearchLocation(
+                latitude = latitude,
+                longitude = longitude
+            )
+        }
+    }
 
     // Observar el StateFlow del ViewModel
     val state by model.uiState.collectAsStateWithLifecycle()

@@ -14,7 +14,9 @@ class RoomTripRepository(
 
     override suspend fun saveTrip(
         trip: SavedTrip
-    ): String {
+    ): String = withErrorReporting(
+        "RoomTripRepository.saveTrip"
+    ) {
 
         val tripId = trip.id.ifBlank {
             UUID.randomUUID().toString()
@@ -32,12 +34,14 @@ class RoomTripRepository(
 
         dao.saveTrip(entity)
 
-        return tripId
+        tripId
     }
 
-    override suspend fun getTrips(): List<SavedTrip> {
+    override suspend fun getTrips(): List<SavedTrip> = withErrorReporting(
+        "RoomTripRepository.getTrips"
+    ) {
 
-        return dao.getTrips().map { entity ->
+        dao.getTrips().map { entity ->
 
             SavedTrip(
                 id = entity.id,

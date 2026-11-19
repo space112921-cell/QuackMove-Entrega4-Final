@@ -1,14 +1,21 @@
 
 package com.quackmove.app.feature.routes
 
+import android.util.Log
+
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+
+import com.quackmove.app.data.repository.RoutePoint
 import com.quackmove.app.data.repository.RouteSummary
 import com.quackmove.app.data.repository.RoutesRepository
+
 import com.quackmove.app.domain.BatteryEstimate
 import com.quackmove.app.domain.BatteryEstimator
+
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -19,9 +26,16 @@ import kotlinx.coroutines.launch
 // =====================================
 
 data class RoutesUiState(
+
     val route: RouteSummary? = null,
+
     val isLoading: Boolean = false,
+
     val errorMessage: String? = null,
+
+    // Origen y destino seleccionados
+    val originName: String = "",
+    val destinationName: String = "",
 
     // Datos provisionales del vehículo
     val batteryCapacity: String = "60",
@@ -29,96 +43,185 @@ data class RoutesUiState(
     val departureBattery: String = "80",
     val minimumReserve: String = "10",
 
-    // Resultado del cálculo de autonomía
+    // Resultado de autonomía
     val batteryEstimate: BatteryEstimate? = null,
+
     val validationError: String? = null
 )
 
 // =====================================
-// VIEWMODEL
+// ROUTES VIEWMODEL
 // =====================================
 
 class RoutesViewModel(
     private val routesRepository: RoutesRepository
 ) : ViewModel() {
 
-    // Estado privado
+    companion object {
+        private const val TAG = "QuackMoveRoutes"
+    }
+
     private val _uiState = MutableStateFlow(
         RoutesUiState()
     )
 
-    // Estado público para la pantalla
     val uiState = _uiState.asStateFlow()
 
-    init {
-        refreshRoute()
-    }
+    // Coordenadas seleccionadas por el usuario
+    private var originPoint: RoutePoint? = null
+    private var destinationPoint: RoutePoint? = null
+
+    private var routeJob: Job? = null
+
+    // No usamos init { refreshRoute() }.
+    // Esperamos a que el usuario elija su viaje.
 
     // =====================================
-    // CONSULTAR O ACTUALIZAR LA RUTA
+    // SELECCIONAR ORIGEN Y DESTINO
     // =====================================
 
-    fun refreshRoute() {
+    fun setRoutePoints(
+        origin: RoutePoint,
+        destination: RoutePoint
+    ) {
 
-        // Evitar consultas simultáneas
-        if (_uiState.value.isLoading) return
+        if (!origin.isValid()) {
 
-        _uiState.update {
-            it.copy(
-                isLoading = true,
-                errorMessage = null
+            _uiState.update { state ->
+                state.copy(
+                    errorMessage =
+                        "El origen seleccionado no es válido."
+                )
+            }
+
+            return
+        }
+
+        if (!destination.isValid()) {
+
+            _uiState.update { state ->
+                state.copy(
+                    errorMessage =
+                        "El destino seleccionado no es válido."
+                )
+            }
+
+            return
+        }
+
+        routeJob?.cancel()
+        routeJob = null
+
+        originPoint = origin
+        destinationPoint = destination
+
+        _uiState.update { state ->
+            state.copy(
+                originName = origin.name,
+                destinationName = destination.name,
+                route = null,
+                batteryEstimate = null,
+                isLoading = false,
+                errorMessage = null,
+                validationError = null
             )
         }
 
-        viewModelScope.launch {
+        Log.d(
+            TAG,
+            "Ruta seleccionada: " +
+                    "${origin.name} -> ${destination.name}"
+        )
+    }
+
+    // =====================================
+    // CALCULAR RUTA REAL
+    // =====================================
+
+    fun calculateRoute() {
+
+        val origin = originPoint
+        val destination = destinationPoint
+
+        if (origin == null || destination == null) {
+
+            _uiState.update { state ->
+                state.copy(
+                    isLoading = false,
+                    errorMessage =
+                        "Selecciona un origen y un destino " +
+                                "con coordenadas antes de calcular."
+                )
+            }
+
+            return
+        }
+
+        routeJob?.cancel()
+
+        routeJob = viewModelScope.launch {
+
+            _uiState.update { state ->
+                state.copy(
+                    isLoading = true,
+                    errorMessage = null
+                )
+            }
 
             try {
 
-                // Consultar mediante Repository
-                val result = routesRepository.fetchRoute()
+                val result = routesRepository.fetchRoute(
+                    origin = origin,
+                    destination = destination
+                )
 
-                // Actualizar solamente cuando la consulta
-                // termina correctamente
-                _uiState.update {
-                    it.copy(
+                Log.d(
+                    TAG,
+                    "Ruta calculada: " +
+                            "${result.distanceKm} km, " +
+                            "${result.drivingMinutes} min"
+                )
+
+                _uiState.update { state ->
+                    state.copy(
                         route = result,
+                        isLoading = false,
                         errorMessage = null
                     )
                 }
 
-                // Recalcular la autonomía
                 calculateBattery()
 
             } catch (exception: CancellationException) {
 
-                // Respetar la cancelación de corrutinas
                 throw exception
 
             } catch (exception: Exception) {
 
-                // M10: conservar la última ruta válida
-                // y su cálculo si falla la actualización
+                Log.e(
+                    TAG,
+                    "No se pudo calcular la ruta",
+                    exception
+                )
+
                 _uiState.update { state ->
-
                     state.copy(
-                        errorMessage = if (state.route != null) {
-
-                            "No se pudo actualizar la ruta. " +
-                                    "Se conservan los datos anteriores."
-
-                        } else {
-
-                            "No se pudo cargar la ruta. " +
-                                    "Comprueba Internet y el servidor."
-                        }
+                        route = null,
+                        batteryEstimate = null,
+                        isLoading = false,
+                        errorMessage =
+                            "No se pudo calcular la ruta: " +
+                                    (
+                                            exception.message
+                                                ?: "Error desconocido"
+                                            )
                     )
                 }
 
             } finally {
 
-                // Terminar el estado de carga
-                _uiState.update {
-                    it.copy(
+                _uiState.update { state ->
+                    state.copy(
                         isLoading = false
                     )
                 }
@@ -127,13 +230,21 @@ class RoutesViewModel(
     }
 
     // =====================================
-    // ACTUALIZAR CAPACIDAD DE BATERÍA
+    // ACTUALIZAR RUTA
+    // =====================================
+
+    fun refreshRoute() {
+        calculateRoute()
+    }
+
+    // =====================================
+    // CAMBIAR CAPACIDAD DE BATERÍA
     // =====================================
 
     fun updateBatteryCapacity(value: String) {
 
-        _uiState.update {
-            it.copy(
+        _uiState.update { state ->
+            state.copy(
                 batteryCapacity = value
             )
         }
@@ -142,13 +253,13 @@ class RoutesViewModel(
     }
 
     // =====================================
-    // ACTUALIZAR CONSUMO DEL VEHÍCULO
+    // CAMBIAR CONSUMO
     // =====================================
 
     fun updateConsumption(value: String) {
 
-        _uiState.update {
-            it.copy(
+        _uiState.update { state ->
+            state.copy(
                 consumption = value
             )
         }
@@ -157,13 +268,13 @@ class RoutesViewModel(
     }
 
     // =====================================
-    // ACTUALIZAR BATERÍA DE SALIDA
+    // CAMBIAR BATERÍA INICIAL
     // =====================================
 
     fun updateDepartureBattery(value: String) {
 
-        _uiState.update {
-            it.copy(
+        _uiState.update { state ->
+            state.copy(
                 departureBattery = value
             )
         }
@@ -172,13 +283,13 @@ class RoutesViewModel(
     }
 
     // =====================================
-    // ACTUALIZAR RESERVA MÍNIMA
+    // CAMBIAR RESERVA MÍNIMA
     // =====================================
 
     fun updateMinimumReserve(value: String) {
 
-        _uiState.update {
-            it.copy(
+        _uiState.update { state ->
+            state.copy(
                 minimumReserve = value
             )
         }
@@ -187,25 +298,27 @@ class RoutesViewModel(
     }
 
     // =====================================
-    // CONVERSIÓN DE VALORES
+    // CONVERSIÓN NUMÉRICA
     // =====================================
 
-    private fun parseNumber(value: String): Double? {
+    private fun parseNumber(
+        value: String
+    ): Double? {
 
-        return value.trim()
+        return value
+            .trim()
             .replace(",", ".")
             .toDoubleOrNull()
     }
 
     // =====================================
-    // CÁLCULO DE AUTONOMÍA
+    // CALCULAR BATERÍA NECESARIA
     // =====================================
 
     private fun calculateBattery() {
 
         val state = _uiState.value
 
-        // Necesitamos una ruta para calcular
         val currentRoute = state.route
 
         if (currentRoute == null) {
@@ -220,7 +333,6 @@ class RoutesViewModel(
             return
         }
 
-        // Convertir datos del vehículo
         val capacity = parseNumber(
             state.batteryCapacity
         )
@@ -236,10 +348,6 @@ class RoutesViewModel(
         val reserve = parseNumber(
             state.minimumReserve
         )
-
-        // =====================================
-        // VALIDACIONES
-        // =====================================
 
         if (
             capacity == null ||
@@ -264,8 +372,8 @@ class RoutesViewModel(
             !energyConsumption.isFinite() ||
             !departure.isFinite() ||
             !reserve.isFinite() ||
-            capacity <= 0 ||
-            energyConsumption <= 0 ||
+            capacity <= 0.0 ||
+            energyConsumption <= 0.0 ||
             departure !in 0.0..100.0 ||
             reserve !in 0.0..100.0
         ) {
@@ -275,26 +383,28 @@ class RoutesViewModel(
                     batteryEstimate = null,
                     validationError =
                         "Revisa los datos del vehículo. " +
-                                "Los porcentajes deben estar " +
-                                "entre 0 y 100."
+                                "La capacidad y el consumo deben " +
+                                "ser positivos, y los porcentajes " +
+                                "estar entre 0 y 100."
                 )
             }
 
             return
         }
 
-        // =====================================
-        // EJECUTAR CÁLCULO DE BATERÍA
-        // =====================================
-
         try {
 
             val estimate = BatteryEstimator.calculate(
+
                 distanceKm = currentRoute.distanceKm,
+
                 usableBatteryKwh = capacity,
+
                 consumptionKwhPer100Km =
                     energyConsumption,
+
                 departurePercent = departure,
+
                 minimumArrivalPercent = reserve
             )
 
@@ -307,6 +417,12 @@ class RoutesViewModel(
 
         } catch (exception: IllegalArgumentException) {
 
+            Log.e(
+                TAG,
+                "Error calculando autonomía",
+                exception
+            )
+
             _uiState.update {
                 it.copy(
                     batteryEstimate = null,
@@ -316,10 +432,21 @@ class RoutesViewModel(
             }
         }
     }
+
+    // =====================================
+    // LIMPIAR RECURSOS
+    // =====================================
+
+    override fun onCleared() {
+
+        routeJob?.cancel()
+
+        super.onCleared()
+    }
 }
 
 // =====================================
-// FACTORY - INYECCIÓN MANUAL
+// FACTORY
 // =====================================
 
 class RoutesViewModelFactory(
@@ -343,7 +470,7 @@ class RoutesViewModelFactory(
         }
 
         throw IllegalArgumentException(
-            "ViewModel desconocido"
+            "ViewModel desconocido: ${modelClass.name}"
         )
     }
 }

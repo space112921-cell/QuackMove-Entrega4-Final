@@ -7,4 +7,6 @@ plugins {
     id("com.google.devtools.ksp") version "2.3.10" apply false
 
 
+    id("com.google.firebase.crashlytics") version "3.0.8" apply false
+
 }
